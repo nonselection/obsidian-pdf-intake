@@ -1,7 +1,18 @@
 import { App, Modal, TFile, Vault, Notice } from "obsidian";
 import { PdfMetadata, PdfAnnotation, AnnotationType } from "./types";
 import { RenamePreview, executeRename } from "./renamer";
-import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
+import {
+	DuplicateGroup,
+	formatSize,
+	formatDuplicateStats,
+	KeepStrategy,
+	getStrategyName,
+	getFileToKeep,
+	deleteDuplicatesInGroup,
+	deleteAllDuplicates,
+	moveDuplicatesToFolder,
+	moveAllDuplicatesToFolder,
+} from "./duplicates";
 import { writeMetadataToPdf } from "./writeback";
 import { getAnnotationStats } from "./annotations";
 import { getPdfPageCount, generateThumbnailAsDataUrl } from "./thumbnail";
@@ -300,6 +311,8 @@ export class RenamePreviewModal extends Modal {
 export class DuplicatesModal extends Modal {
 	groups: DuplicateGroup[];
 	vault: Vault;
+	strategy: KeepStrategy = "oldest";
+	moveFolder: string = "Duplicates";
 
 	constructor(app: App, groups: DuplicateGroup[], vault: Vault) {
 		super(app);
@@ -308,6 +321,10 @@ export class DuplicatesModal extends Modal {
 	}
 
 	onOpen(): void {
+		this.render();
+	}
+
+	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("pdf-metadata-modal", "pdf-duplicates-modal");
@@ -324,36 +341,201 @@ export class DuplicatesModal extends Modal {
 			cls: "pdf-duplicates-summary",
 		});
 
-		for (const group of this.groups) {
-			const groupEl = contentEl.createDiv({ cls: "pdf-duplicate-group" });
+		// Bulk actions bar
+		const bulkBar = contentEl.createDiv({ cls: "pdf-duplicates-bulk-bar" });
 
-			groupEl.createEl("h3", {
-				text: `${group.files.length} identical files (${formatSize(group.files[0].stat.size)} each)`,
+		// Strategy selector
+		const strategyRow = bulkBar.createDiv({ cls: "pdf-duplicates-strategy" });
+		strategyRow.createEl("label", { text: "Strategy:" });
+		const strategySelect = strategyRow.createEl("select");
+
+		const strategies: KeepStrategy[] = ["oldest", "newest", "shortest-path", "longest-path"];
+		for (const s of strategies) {
+			const option = strategySelect.createEl("option", {
+				text: getStrategyName(s),
+				value: s,
+			});
+			if (s === this.strategy) option.selected = true;
+		}
+
+		strategySelect.addEventListener("change", () => {
+			this.strategy = strategySelect.value as KeepStrategy;
+			this.render();
+		});
+
+		// Bulk action buttons
+		const bulkButtons = bulkBar.createDiv({ cls: "pdf-duplicates-bulk-buttons" });
+
+		const deleteAllBtn = bulkButtons.createEl("button", {
+			text: "Delete All Duplicates",
+			cls: "mod-warning",
+		});
+		deleteAllBtn.addEventListener("click", () => this.confirmDeleteAll());
+
+		const moveAllBtn = bulkButtons.createEl("button", {
+			text: "Move All to Folder",
+		});
+		moveAllBtn.addEventListener("click", () => this.showMoveDialog());
+
+		// Groups
+		const groupsContainer = contentEl.createDiv({ cls: "pdf-duplicates-groups" });
+
+		for (const group of this.groups) {
+			this.renderGroup(group, groupsContainer);
+		}
+	}
+
+	private renderGroup(group: DuplicateGroup, container: HTMLElement): void {
+		const groupEl = container.createDiv({ cls: "pdf-duplicate-group" });
+
+		const header = groupEl.createDiv({ cls: "pdf-duplicate-group-header" });
+		header.createEl("h3", {
+			text: `${group.files.length} identical files (${formatSize(group.files[0].stat.size)} each)`,
+		});
+
+		// Group actions
+		const groupActions = header.createDiv({ cls: "pdf-duplicate-group-actions" });
+
+		const deleteGroupBtn = groupActions.createEl("button", {
+			text: "Delete duplicates",
+			cls: "mod-warning",
+		});
+		deleteGroupBtn.addEventListener("click", async () => {
+			const deleted = await deleteDuplicatesInGroup(group, this.vault, this.strategy);
+			new Notice(`Deleted ${deleted} file(s)`);
+			this.groups = this.groups.filter((g) => g !== group || group.files.length <= 1);
+			this.render();
+		});
+
+		const list = groupEl.createEl("ul", { cls: "pdf-duplicate-list" });
+		const keepFile = getFileToKeep(group.files, this.strategy);
+
+		for (const file of group.files) {
+			const isKeep = file.path === keepFile.path;
+			const item = list.createEl("li", {
+				cls: isKeep ? "pdf-duplicate-keep" : "",
 			});
 
-			const list = groupEl.createEl("ul", { cls: "pdf-duplicate-list" });
+			const pathSpan = item.createEl("span", {
+				text: file.path,
+				cls: "pdf-duplicate-path",
+			});
 
-			for (const file of group.files) {
-				const item = list.createEl("li");
-				item.createEl("span", { text: file.path, cls: "pdf-duplicate-path" });
-
-				const actions = item.createDiv({ cls: "pdf-duplicate-actions" });
-
-				const openBtn = actions.createEl("button", { text: "Open" });
-				openBtn.addEventListener("click", () => {
-					this.app.workspace.openLinkText(file.path, "");
+			if (isKeep) {
+				pathSpan.createEl("span", {
+					text: " (keep)",
+					cls: "pdf-duplicate-keep-badge",
 				});
+			}
 
+			const actions = item.createDiv({ cls: "pdf-duplicate-actions" });
+
+			const openBtn = actions.createEl("button", { text: "Open" });
+			openBtn.addEventListener("click", () => {
+				this.app.workspace.openLinkText(file.path, "");
+			});
+
+			if (!isKeep) {
 				const deleteBtn = actions.createEl("button", {
 					text: "Delete",
 					cls: "mod-warning",
 				});
 				deleteBtn.addEventListener("click", async () => {
 					await this.vault.trash(file, true);
-					item.remove();
+					group.files = group.files.filter((f) => f.path !== file.path);
+					if (group.files.length <= 1) {
+						this.groups = this.groups.filter((g) => g !== group);
+					}
+					this.render();
 				});
 			}
 		}
+	}
+
+	private confirmDeleteAll(): void {
+		const totalToDelete = this.groups.reduce((sum, g) => sum + g.files.length - 1, 0);
+
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal");
+
+		contentEl.createEl("h2", { text: "Confirm Delete All" });
+		contentEl.createEl("p", {
+			text: `This will delete ${totalToDelete} duplicate file(s), keeping the ${getStrategyName(this.strategy).toLowerCase()} in each group.`,
+		});
+		contentEl.createEl("p", {
+			text: "Files will be moved to trash.",
+			cls: "pdf-duplicates-warning",
+		});
+
+		const buttons = contentEl.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const confirmBtn = buttons.createEl("button", {
+			text: "Delete All",
+			cls: "mod-warning",
+		});
+		confirmBtn.addEventListener("click", async () => {
+			const deleted = await deleteAllDuplicates(
+				this.groups,
+				this.vault,
+				this.strategy,
+				true,
+				(current, total) => {
+					new Notice(`Processing group ${current}/${total}...`);
+				}
+			);
+			new Notice(`Deleted ${deleted} duplicate file(s)`);
+			this.close();
+		});
+
+		const cancelBtn = buttons.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.render());
+	}
+
+	private showMoveDialog(): void {
+		const totalToMove = this.groups.reduce((sum, g) => sum + g.files.length - 1, 0);
+
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal");
+
+		contentEl.createEl("h2", { text: "Move Duplicates to Folder" });
+		contentEl.createEl("p", {
+			text: `This will move ${totalToMove} duplicate file(s) to a folder, keeping the ${getStrategyName(this.strategy).toLowerCase()} in each group.`,
+		});
+
+		const folderRow = contentEl.createDiv({ cls: "pdf-duplicates-folder-row" });
+		folderRow.createEl("label", { text: "Target folder:" });
+		const folderInput = folderRow.createEl("input", {
+			type: "text",
+			value: this.moveFolder,
+		});
+		folderInput.addEventListener("input", () => {
+			this.moveFolder = folderInput.value;
+		});
+
+		const buttons = contentEl.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const moveBtn = buttons.createEl("button", {
+			text: "Move All",
+			cls: "mod-cta",
+		});
+		moveBtn.addEventListener("click", async () => {
+			const moved = await moveAllDuplicatesToFolder(
+				this.groups,
+				this.vault,
+				this.moveFolder,
+				this.strategy,
+				(current, total) => {
+					new Notice(`Processing group ${current}/${total}...`);
+				}
+			);
+			new Notice(`Moved ${moved} file(s) to ${this.moveFolder}`);
+			this.close();
+		});
+
+		const cancelBtn = buttons.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.render());
 	}
 
 	onClose(): void {

@@ -241,3 +241,95 @@
 	white-space: pre-wrap;
 	word-break: break-all;
 }
+
+/* Duplicates Bulk Actions */
+.pdf-duplicates-bulk-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1rem;
+	align-items: center;
+	justify-content: space-between;
+	padding: 1rem;
+	margin-bottom: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+}
+
+.pdf-duplicates-strategy {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.pdf-duplicates-strategy label {
+	font-weight: 500;
+}
+
+.pdf-duplicates-strategy select {
+	padding: 0.4rem 0.75rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+}
+
+.pdf-duplicates-bulk-buttons {
+	display: flex;
+	gap: 0.5rem;
+}
+
+.pdf-duplicates-groups {
+	max-height: 400px;
+	overflow-y: auto;
+}
+
+.pdf-duplicate-group-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
+.pdf-duplicate-group-header h3 {
+	margin: 0;
+}
+
+.pdf-duplicate-group-actions {
+	display: flex;
+	gap: 0.25rem;
+}
+
+.pdf-duplicate-keep {
+	background: var(--background-secondary-alt);
+	border-radius: 4px;
+}
+
+.pdf-duplicate-keep-badge {
+	color: var(--text-success);
+	font-size: 0.85rem;
+	font-weight: 500;
+}
+
+.pdf-duplicates-warning {
+	color: var(--text-warning);
+	font-style: italic;
+}
+
+.pdf-duplicates-folder-row {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	margin: 1rem 0;
+}
+
+.pdf-duplicates-folder-row label {
+	font-weight: 500;
+}
+
+.pdf-duplicates-folder-row input {
+	flex: 1;
+	padding: 0.5rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+}

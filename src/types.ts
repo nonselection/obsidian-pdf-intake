@@ -10,6 +10,7 @@ export interface PdfMetadata {
 	pageCount: number;
 	fileSize: number;
 	filePath: string;
+	contentHash?: string;
 }
 
 export type OutputMode = "companion" | "index" | "sidecar";
@@ -24,6 +25,7 @@ export interface PdfMetadataSettings {
 	watchForNewPdfs: boolean;
 	companionTemplate: string;
 	overwriteExisting: boolean;
+	renameTemplate: string;
 }
 
 export const DEFAULT_SETTINGS: PdfMetadataSettings = {
@@ -36,4 +38,5 @@ export const DEFAULT_SETTINGS: PdfMetadataSettings = {
 	watchForNewPdfs: true,
 	companionTemplate: "# {{title}}\n\n{{embed}}\n\n## Notes\n\n",
 	overwriteExisting: false,
+	renameTemplate: "{author} - {title}",
 };

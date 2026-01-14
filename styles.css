@@ -29,3 +29,114 @@
 .pdf-metadata-value {
 	width: 70%;
 }
+
+/* Rename Preview Modal */
+.pdf-rename-summary {
+	color: var(--text-muted);
+	margin-bottom: 1rem;
+}
+
+.pdf-rename-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: 1rem;
+}
+
+.pdf-rename-table th {
+	text-align: left;
+	padding: 0.5rem;
+	border-bottom: 2px solid var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.pdf-rename-table td {
+	padding: 0.5rem;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pdf-rename-old {
+	color: var(--text-muted);
+}
+
+.pdf-rename-new {
+	font-weight: 500;
+}
+
+.pdf-rename-ok {
+	color: var(--text-success);
+}
+
+.pdf-rename-skip {
+	color: var(--text-muted);
+}
+
+.pdf-rename-conflict {
+	color: var(--text-warning);
+}
+
+.pdf-rename-buttons {
+	display: flex;
+	gap: 0.5rem;
+	justify-content: flex-end;
+	margin-top: 1rem;
+}
+
+/* Duplicates Modal */
+.pdf-duplicates-modal {
+	max-width: 600px;
+}
+
+.pdf-duplicates-summary {
+	color: var(--text-muted);
+	margin-bottom: 1rem;
+}
+
+.pdf-duplicate-group {
+	margin-bottom: 1.5rem;
+	padding: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+}
+
+.pdf-duplicate-group h3 {
+	margin-top: 0;
+	margin-bottom: 0.5rem;
+	font-size: 0.9rem;
+	color: var(--text-muted);
+}
+
+.pdf-duplicate-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+
+.pdf-duplicate-list li {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pdf-duplicate-list li:last-child {
+	border-bottom: none;
+}
+
+.pdf-duplicate-path {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	margin-right: 1rem;
+}
+
+.pdf-duplicate-actions {
+	display: flex;
+	gap: 0.25rem;
+}
+
+.pdf-duplicate-actions button {
+	padding: 0.25rem 0.5rem;
+	font-size: 0.8rem;
+}

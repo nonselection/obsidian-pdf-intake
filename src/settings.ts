@@ -151,5 +151,19 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// Rename template
+		new Setting(containerEl)
+			.setName("Rename template")
+			.setDesc("Template for batch rename. Placeholders: {title}, {author}, {subject}, {year}, {keywords}, {pages}, {creator}")
+			.addText((text) =>
+				text
+					.setPlaceholder("{author} - {title}")
+					.setValue(this.plugin.settings.renameTemplate)
+					.onChange(async (value) => {
+						this.plugin.settings.renameTemplate = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 }

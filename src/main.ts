@@ -8,8 +8,10 @@ import {
 	getSidecarPath,
 } from "./generator";
 import { scanVault } from "./scanner";
+import { generateRenamePreview } from "./renamer";
+import { findDuplicates } from "./duplicates";
 import { PdfMetadataSettingTab } from "./settings";
-import { PdfMetadataModal } from "./modal";
+import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal } from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
 	settings: PdfMetadataSettings = DEFAULT_SETTINGS;
@@ -62,6 +64,18 @@ export default class PdfMetadataPlugin extends Plugin {
 			id: "rebuild-pdf-index",
 			name: "Rebuild PDF index",
 			callback: () => this.rebuildIndex(),
+		});
+
+		this.addCommand({
+			id: "batch-rename-pdfs",
+			name: "Batch rename PDFs",
+			callback: () => this.batchRename(),
+		});
+
+		this.addCommand({
+			id: "find-duplicate-pdfs",
+			name: "Find duplicate PDFs",
+			callback: () => this.findDuplicatePdfs(),
 		});
 
 		if (this.settings.watchForNewPdfs) {
@@ -223,5 +237,62 @@ export default class PdfMetadataPlugin extends Plugin {
 		if (!folder) {
 			await this.app.vault.createFolder(folderPath);
 		}
+	}
+
+	async batchRename(): Promise<void> {
+		const pdfs = scanVault(this.app.vault, this.settings);
+
+		if (pdfs.length === 0) {
+			new Notice("No PDFs found in vault.");
+			return;
+		}
+
+		new Notice(`Scanning ${pdfs.length} PDF(s) for metadata...`);
+
+		const metadataMap = new Map<string, PdfMetadata>();
+
+		for (const file of pdfs) {
+			const metadata = await extractMetadata(file, this.app.vault);
+			metadataMap.set(file.path, metadata);
+		}
+
+		const previews = generateRenamePreview(
+			pdfs,
+			metadataMap,
+			this.settings.renameTemplate,
+			this.app.vault
+		);
+
+		new RenamePreviewModal(
+			this.app,
+			previews,
+			this.app.vault,
+			(renamed) => {
+				new Notice(`Renamed ${renamed} PDF(s).`);
+			}
+		).open();
+	}
+
+	async findDuplicatePdfs(): Promise<void> {
+		const pdfs = scanVault(this.app.vault, this.settings);
+
+		if (pdfs.length === 0) {
+			new Notice("No PDFs found in vault.");
+			return;
+		}
+
+		new Notice(`Scanning ${pdfs.length} PDF(s) for duplicates...`);
+
+		const duplicates = await findDuplicates(
+			pdfs,
+			this.app.vault,
+			(current, total) => {
+				if (current % 10 === 0 || current === total) {
+					new Notice(`Hashing PDF ${current}/${total}...`);
+				}
+			}
+		);
+
+		new DuplicatesModal(this.app, duplicates, this.app.vault).open();
 	}
 }

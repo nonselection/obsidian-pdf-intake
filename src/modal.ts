@@ -1,5 +1,7 @@
-import { App, Modal } from "obsidian";
+import { App, Modal, TFile, Vault } from "obsidian";
 import { PdfMetadata } from "./types";
+import { RenamePreview, executeRename } from "./renamer";
+import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
@@ -59,5 +61,161 @@ export class PdfMetadataModal extends Modal {
 		if (bytes < 1024) return `${bytes} B`;
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+}
+
+export class RenamePreviewModal extends Modal {
+	previews: RenamePreview[];
+	vault: Vault;
+	onComplete: (renamed: number) => void;
+
+	constructor(
+		app: App,
+		previews: RenamePreview[],
+		vault: Vault,
+		onComplete: (renamed: number) => void
+	) {
+		super(app);
+		this.previews = previews;
+		this.vault = vault;
+		this.onComplete = onComplete;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal");
+
+		contentEl.createEl("h2", { text: "Batch Rename Preview" });
+
+		const validCount = this.previews.filter((p) => !p.skip && !p.conflict).length;
+		const skipCount = this.previews.filter((p) => p.skip).length;
+		const conflictCount = this.previews.filter((p) => p.conflict).length;
+
+		contentEl.createEl("p", {
+			text: `${validCount} file(s) to rename, ${skipCount} skipped, ${conflictCount} conflict(s)`,
+			cls: "pdf-rename-summary",
+		});
+
+		const table = contentEl.createEl("table", { cls: "pdf-rename-table" });
+		const header = table.createEl("tr");
+		header.createEl("th", { text: "Current Name" });
+		header.createEl("th", { text: "New Name" });
+		header.createEl("th", { text: "Status" });
+
+		for (const preview of this.previews) {
+			const row = table.createEl("tr");
+
+			row.createEl("td", { text: preview.oldName, cls: "pdf-rename-old" });
+			row.createEl("td", { text: preview.newName, cls: "pdf-rename-new" });
+
+			let status = "✓";
+			let statusCls = "pdf-rename-ok";
+
+			if (preview.skip) {
+				status = `⏭ ${preview.skipReason || "Skipped"}`;
+				statusCls = "pdf-rename-skip";
+			} else if (preview.conflict) {
+				status = "⚠ Conflict";
+				statusCls = "pdf-rename-conflict";
+			}
+
+			row.createEl("td", { text: status, cls: statusCls });
+		}
+
+		const buttonContainer = contentEl.createDiv({ cls: "pdf-rename-buttons" });
+
+		const renameBtn = buttonContainer.createEl("button", {
+			text: `Rename ${validCount} file(s)`,
+			cls: "mod-cta",
+		});
+		renameBtn.disabled = validCount === 0;
+		renameBtn.addEventListener("click", () => this.executeRenames());
+
+		const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.close());
+	}
+
+	private async executeRenames(): Promise<void> {
+		let renamed = 0;
+
+		for (const preview of this.previews) {
+			if (await executeRename(preview, this.vault)) {
+				renamed++;
+			}
+		}
+
+		this.onComplete(renamed);
+		this.close();
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class DuplicatesModal extends Modal {
+	groups: DuplicateGroup[];
+	vault: Vault;
+
+	constructor(app: App, groups: DuplicateGroup[], vault: Vault) {
+		super(app);
+		this.groups = groups;
+		this.vault = vault;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal", "pdf-duplicates-modal");
+
+		contentEl.createEl("h2", { text: "Duplicate PDFs" });
+
+		if (this.groups.length === 0) {
+			contentEl.createEl("p", { text: "No duplicates found." });
+			return;
+		}
+
+		contentEl.createEl("p", {
+			text: formatDuplicateStats(this.groups),
+			cls: "pdf-duplicates-summary",
+		});
+
+		for (const group of this.groups) {
+			const groupEl = contentEl.createDiv({ cls: "pdf-duplicate-group" });
+
+			groupEl.createEl("h3", {
+				text: `${group.files.length} identical files (${formatSize(group.files[0].stat.size)} each)`,
+			});
+
+			const list = groupEl.createEl("ul", { cls: "pdf-duplicate-list" });
+
+			for (const file of group.files) {
+				const item = list.createEl("li");
+				item.createEl("span", { text: file.path, cls: "pdf-duplicate-path" });
+
+				const actions = item.createDiv({ cls: "pdf-duplicate-actions" });
+
+				const openBtn = actions.createEl("button", { text: "Open" });
+				openBtn.addEventListener("click", () => {
+					this.app.workspace.openLinkText(file.path, "");
+				});
+
+				const deleteBtn = actions.createEl("button", {
+					text: "Delete",
+					cls: "mod-warning",
+				});
+				deleteBtn.addEventListener("click", async () => {
+					await this.vault.trash(file, true);
+					item.remove();
+				});
+			}
+		}
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }

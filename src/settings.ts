@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type PdfMetadataPlugin from "./main";
-import { OutputMode } from "./types";
+import { OutputMode, AnnotationType, AnnotationGrouping } from "./types";
 
 export class PdfMetadataSettingTab extends PluginSettingTab {
 	plugin: PdfMetadataPlugin;
@@ -141,7 +141,7 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 		// Companion template
 		new Setting(containerEl)
 			.setName("Companion note template")
-			.setDesc("Template for companion notes. Placeholders: {{title}}, {{embed}}, {{thumbnail}}")
+			.setDesc("Template for companion notes. Placeholders: {{title}}, {{embed}}, {{thumbnail}}, {{annotations}}")
 			.addTextArea((text) =>
 				text
 					.setPlaceholder("# {{title}}\n\n{{thumbnail}}\n\n{{embed}}\n\n## Notes\n\n")
@@ -212,5 +212,103 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// Annotations Section
+		containerEl.createEl("h3", { text: "Annotations" });
+
+		// Extract annotations toggle
+		new Setting(containerEl)
+			.setName("Extract annotations")
+			.setDesc("Extract highlights, comments, and other annotations from PDFs.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.extractAnnotations)
+					.onChange(async (value) => {
+						this.plugin.settings.extractAnnotations = value;
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		if (this.plugin.settings.extractAnnotations) {
+			// Annotation types
+			const allTypes: { type: AnnotationType; label: string }[] = [
+				{ type: "Highlight", label: "Highlights" },
+				{ type: "Underline", label: "Underlines" },
+				{ type: "StrikeOut", label: "Strikethroughs" },
+				{ type: "Squiggly", label: "Squiggly underlines" },
+				{ type: "Text", label: "Comments (sticky notes)" },
+				{ type: "FreeText", label: "Free text" },
+				{ type: "Ink", label: "Ink drawings" },
+			];
+
+			new Setting(containerEl)
+				.setName("Annotation types")
+				.setDesc("Select which annotation types to extract.");
+
+			for (const { type, label } of allTypes) {
+				new Setting(containerEl)
+					.setName(label)
+					.addToggle((toggle) =>
+						toggle
+							.setValue(this.plugin.settings.annotationTypes.includes(type))
+							.onChange(async (value) => {
+								if (value) {
+									if (!this.plugin.settings.annotationTypes.includes(type)) {
+										this.plugin.settings.annotationTypes.push(type);
+									}
+								} else {
+									this.plugin.settings.annotationTypes =
+										this.plugin.settings.annotationTypes.filter((t) => t !== type);
+								}
+								await this.plugin.saveSettings();
+							})
+					)
+					.settingEl.addClass("pdf-metadata-indent");
+			}
+
+			// Annotation grouping
+			new Setting(containerEl)
+				.setName("Group annotations by")
+				.setDesc("How to organize annotations in companion notes.")
+				.addDropdown((dropdown) =>
+					dropdown
+						.addOption("type", "Annotation type")
+						.addOption("page", "Page number")
+						.addOption("date", "Creation date")
+						.addOption("flat", "No grouping (flat list)")
+						.setValue(this.plugin.settings.annotationGrouping)
+						.onChange(async (value) => {
+							this.plugin.settings.annotationGrouping = value as AnnotationGrouping;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			// Extract highlight text
+			new Setting(containerEl)
+				.setName("Extract highlighted text")
+				.setDesc("Attempt to extract the text content from highlights.")
+				.addToggle((toggle) =>
+					toggle
+						.setValue(this.plugin.settings.extractHighlightText)
+						.onChange(async (value) => {
+							this.plugin.settings.extractHighlightText = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			// Include annotation colors
+			new Setting(containerEl)
+				.setName("Show annotation colors")
+				.setDesc("Include color indicators in the output.")
+				.addToggle((toggle) =>
+					toggle
+						.setValue(this.plugin.settings.includeAnnotationColors)
+						.onChange(async (value) => {
+							this.plugin.settings.includeAnnotationColors = value;
+							await this.plugin.saveSettings();
+						})
+				);
+		}
 	}
 }

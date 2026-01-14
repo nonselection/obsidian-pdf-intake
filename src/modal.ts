@@ -1,8 +1,9 @@
 import { App, Modal, TFile, Vault, Notice } from "obsidian";
-import { PdfMetadata } from "./types";
+import { PdfMetadata, PdfAnnotation, AnnotationType } from "./types";
 import { RenamePreview, executeRename } from "./renamer";
 import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
 import { writeMetadataToPdf } from "./writeback";
+import { getAnnotationStats } from "./annotations";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
@@ -296,6 +297,139 @@ export class WritebackModal extends Modal {
 			new Notice(`Failed to write metadata: ${error}`);
 		}
 		this.close();
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class PdfAnnotationsModal extends Modal {
+	annotations: PdfAnnotation[];
+	pdfFile: TFile;
+
+	constructor(app: App, annotations: PdfAnnotation[], pdfFile: TFile) {
+		super(app);
+		this.annotations = annotations;
+		this.pdfFile = pdfFile;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal", "pdf-annotations-modal");
+
+		contentEl.createEl("h2", { text: `Annotations: ${this.pdfFile.name}` });
+
+		if (this.annotations.length === 0) {
+			contentEl.createEl("p", {
+				text: "No annotations found in this PDF.",
+				cls: "pdf-annotations-empty",
+			});
+			return;
+		}
+
+		// Stats summary
+		const stats = getAnnotationStats(this.annotations);
+		const statParts: string[] = [];
+		for (const [type, count] of Object.entries(stats)) {
+			if (count > 0) {
+				statParts.push(`${count} ${this.getTypeName(type as AnnotationType)}`);
+			}
+		}
+		contentEl.createEl("p", {
+			text: statParts.join(", "),
+			cls: "pdf-annotations-summary",
+		});
+
+		// Group by type
+		const groups = new Map<AnnotationType, PdfAnnotation[]>();
+		for (const annot of this.annotations) {
+			const group = groups.get(annot.type) || [];
+			group.push(annot);
+			groups.set(annot.type, group);
+		}
+
+		const typeOrder: AnnotationType[] = [
+			"Highlight",
+			"Underline",
+			"StrikeOut",
+			"Squiggly",
+			"Text",
+			"FreeText",
+			"Ink",
+		];
+
+		for (const type of typeOrder) {
+			const group = groups.get(type);
+			if (!group || group.length === 0) continue;
+
+			const section = contentEl.createDiv({ cls: "pdf-annotation-section" });
+			section.createEl("h3", { text: this.getTypeName(type) });
+
+			const list = section.createEl("ul", { cls: "pdf-annotation-list" });
+
+			for (const annot of group) {
+				const item = list.createEl("li", { cls: "pdf-annotation-item" });
+
+				// Color badge
+				if (annot.color) {
+					const colorBadge = item.createSpan({ cls: "pdf-annotation-color" });
+					colorBadge.style.backgroundColor = this.rgbToHex(annot.color);
+				}
+
+				// Content
+				const content = item.createSpan({ cls: "pdf-annotation-content" });
+				if (annot.extractedText) {
+					content.createEl("q", { text: annot.extractedText });
+				} else if (annot.contents) {
+					content.setText(annot.contents);
+				} else {
+					content.setText("(No text content)");
+					content.addClass("pdf-annotation-empty");
+				}
+
+				// Page reference
+				item.createSpan({
+					text: `p. ${annot.pageNumber}`,
+					cls: "pdf-annotation-page",
+				});
+
+				// Copy button
+				const copyBtn = item.createEl("button", {
+					text: "Copy",
+					cls: "pdf-annotation-copy",
+				});
+				copyBtn.addEventListener("click", () => {
+					const text = annot.extractedText || annot.contents || "";
+					navigator.clipboard.writeText(text);
+					new Notice("Copied to clipboard");
+				});
+			}
+		}
+	}
+
+	private getTypeName(type: AnnotationType): string {
+		const names: Record<AnnotationType, string> = {
+			Highlight: "Highlights",
+			Underline: "Underlines",
+			StrikeOut: "Strikethroughs",
+			Squiggly: "Squiggly Underlines",
+			FreeText: "Free Text",
+			Text: "Comments",
+			Ink: "Drawings",
+		};
+		return names[type] || type;
+	}
+
+	private rgbToHex(color: number[]): string {
+		if (color.length < 3) return "#ffff00";
+		const normalize = (v: number) => (v <= 1 ? Math.round(v * 255) : Math.round(v));
+		const r = normalize(color[0]);
+		const g = normalize(color[1]);
+		const b = normalize(color[2]);
+		return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 	}
 
 	onClose(): void {

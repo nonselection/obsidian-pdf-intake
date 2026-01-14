@@ -1,5 +1,5 @@
 import { Notice, Plugin, TFile } from "obsidian";
-import { PdfMetadataSettings, DEFAULT_SETTINGS, PdfMetadata } from "./types";
+import { PdfMetadataSettings, DEFAULT_SETTINGS, PdfMetadata, PdfAnnotation } from "./types";
 import { extractMetadata, hasMetadata } from "./extractor";
 import {
 	generateCompanionNote,
@@ -12,8 +12,9 @@ import { generateRenamePreview } from "./renamer";
 import { findDuplicates } from "./duplicates";
 import { generateThumbnail, saveThumbnail, getThumbnailPath } from "./thumbnail";
 import { syncFromCompanion, getCompanionForPdf, parseCompanionFrontmatter } from "./writeback";
+import { extractAnnotations, formatAnnotationsForNote, hasAnnotations } from "./annotations";
 import { PdfMetadataSettingTab } from "./settings";
-import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal, WritebackModal } from "./modal";
+import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal, WritebackModal, PdfAnnotationsModal } from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
 	settings: PdfMetadataSettings = DEFAULT_SETTINGS;
@@ -108,6 +109,28 @@ export default class PdfMetadataPlugin extends Plugin {
 					return true;
 				}
 				return false;
+			},
+		});
+
+		this.addCommand({
+			id: "view-pdf-annotations",
+			name: "View PDF annotations",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.viewAnnotations(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "extract-pdf-annotations",
+			name: "Extract annotations from current PDF",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.extractAnnotationsToNote(file);
+				return true;
 			},
 		});
 
@@ -210,6 +233,45 @@ export default class PdfMetadataPlugin extends Plugin {
 		new Notice(`Created companion note for ${file.name}`);
 	}
 
+	async viewAnnotations(file: TFile): Promise<void> {
+		new Notice(`Extracting annotations from ${file.name}...`);
+
+		const annotations = await extractAnnotations(
+			file,
+			this.app.vault,
+			this.settings.annotationTypes
+		);
+
+		new PdfAnnotationsModal(this.app, annotations, file).open();
+	}
+
+	async extractAnnotationsToNote(file: TFile): Promise<void> {
+		new Notice(`Extracting annotations from ${file.name}...`);
+
+		const annotations = await extractAnnotations(
+			file,
+			this.app.vault,
+			this.settings.annotationTypes
+		);
+
+		if (!hasAnnotations(annotations)) {
+			new Notice(`No annotations found in ${file.name}`);
+			return;
+		}
+
+		const annotationsContent = formatAnnotationsForNote(
+			annotations,
+			this.settings.annotationGrouping,
+			this.settings.includeAnnotationColors
+		);
+
+		// Create or update companion note with annotations
+		const metadata = await extractMetadata(file, this.app.vault);
+		await this.writeCompanionNote(metadata, file);
+
+		new Notice(`Extracted ${annotations.length} annotation(s) from ${file.name}`);
+	}
+
 	async rebuildIndex(): Promise<void> {
 		const pdfs = scanVault(this.app.vault, this.settings);
 		const allMetadata: PdfMetadata[] = [];
@@ -230,6 +292,7 @@ export default class PdfMetadataPlugin extends Plugin {
 		);
 
 		let thumbnailPath: string | undefined;
+		let annotationsContent: string | undefined;
 
 		// Generate thumbnail if enabled
 		if (this.settings.generateThumbnails && file) {
@@ -250,10 +313,36 @@ export default class PdfMetadataPlugin extends Plugin {
 			}
 		}
 
+		// Extract annotations if enabled
+		if (this.settings.extractAnnotations && file) {
+			try {
+				const annotations = await extractAnnotations(
+					file,
+					this.app.vault,
+					this.settings.annotationTypes
+				);
+
+				if (hasAnnotations(annotations)) {
+					annotationsContent = formatAnnotationsForNote(
+						annotations,
+						this.settings.annotationGrouping,
+						this.settings.includeAnnotationColors
+					);
+
+					if (annotationsContent) {
+						annotationsContent = `## Annotations\n\n${annotationsContent}`;
+					}
+				}
+			} catch (error) {
+				console.error(`Failed to extract annotations for ${file.path}:`, error);
+			}
+		}
+
 		const content = generateCompanionNote(
 			metadata,
 			this.settings.companionTemplate,
-			thumbnailPath
+			thumbnailPath,
+			annotationsContent
 		);
 
 		await this.ensureFolderExists(this.settings.outputFolder);

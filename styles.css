@@ -1,0 +1,31 @@
+.pdf-metadata-modal {
+	padding: 1rem;
+}
+
+.pdf-metadata-modal h2 {
+	margin-top: 0;
+	margin-bottom: 1rem;
+}
+
+.pdf-metadata-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.pdf-metadata-table tr {
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pdf-metadata-table td {
+	padding: 0.5rem 0;
+}
+
+.pdf-metadata-label {
+	font-weight: 600;
+	width: 30%;
+	color: var(--text-muted);
+}
+
+.pdf-metadata-value {
+	width: 70%;
+}

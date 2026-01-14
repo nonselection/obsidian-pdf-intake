@@ -4,27 +4,72 @@ import { RenamePreview, executeRename } from "./renamer";
 import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
 import { writeMetadataToPdf } from "./writeback";
 import { getAnnotationStats } from "./annotations";
+import { getPdfPageCount, generateThumbnailAsDataUrl } from "./thumbnail";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
 	pdfFile: TFile | null;
 	vault: Vault;
+	editMode: boolean = false;
+	editedMetadata: Partial<PdfMetadata> = {};
 
 	constructor(app: App, metadata: PdfMetadata, pdfFile?: TFile) {
 		super(app);
 		this.metadata = metadata;
 		this.pdfFile = pdfFile || null;
 		this.vault = app.vault;
+		this.editedMetadata = {
+			title: metadata.title,
+			author: metadata.author,
+			subject: metadata.subject,
+			keywords: metadata.keywords ? [...metadata.keywords] : [],
+			creator: metadata.creator,
+		};
 	}
 
 	onOpen(): void {
+		this.render();
+	}
+
+	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("pdf-metadata-modal");
 
+		// Header with edit toggle
+		const header = contentEl.createDiv({ cls: "pdf-metadata-header" });
 		const title = this.metadata.title || this.getFileName();
-		contentEl.createEl("h2", { text: title });
+		header.createEl("h2", { text: title });
 
+		if (this.pdfFile) {
+			const editBtn = header.createEl("button", {
+				text: this.editMode ? "Cancel" : "Edit",
+				cls: "pdf-metadata-edit-btn",
+			});
+			editBtn.addEventListener("click", () => {
+				if (this.editMode) {
+					// Reset to original values
+					this.editedMetadata = {
+						title: this.metadata.title,
+						author: this.metadata.author,
+						subject: this.metadata.subject,
+						keywords: this.metadata.keywords ? [...this.metadata.keywords] : [],
+						creator: this.metadata.creator,
+					};
+				}
+				this.editMode = !this.editMode;
+				this.render();
+			});
+		}
+
+		if (this.editMode) {
+			this.renderEditMode(contentEl);
+		} else {
+			this.renderViewMode(contentEl);
+		}
+	}
+
+	private renderViewMode(contentEl: HTMLElement): void {
 		const table = contentEl.createEl("table", { cls: "pdf-metadata-table" });
 
 		this.addRow(table, "File", this.metadata.filePath);
@@ -38,6 +83,89 @@ export class PdfMetadataModal extends Modal {
 		this.addRow(table, "Modified", this.formatDate(this.metadata.modificationDate));
 		this.addRow(table, "Pages", this.metadata.pageCount > 0 ? this.metadata.pageCount.toString() : undefined);
 		this.addRow(table, "File size", this.formatFileSize(this.metadata.fileSize));
+	}
+
+	private renderEditMode(contentEl: HTMLElement): void {
+		const form = contentEl.createDiv({ cls: "pdf-metadata-form" });
+
+		// Editable fields
+		this.addEditField(form, "Title", "title", this.editedMetadata.title || "");
+		this.addEditField(form, "Author", "author", this.editedMetadata.author || "");
+		this.addEditField(form, "Subject", "subject", this.editedMetadata.subject || "");
+		this.addEditField(form, "Keywords", "keywords", this.editedMetadata.keywords?.join(", ") || "");
+		this.addEditField(form, "Creator", "creator", this.editedMetadata.creator || "");
+
+		// Read-only fields
+		const readonlySection = form.createDiv({ cls: "pdf-metadata-readonly" });
+		readonlySection.createEl("h4", { text: "Read-only" });
+
+		const table = readonlySection.createEl("table", { cls: "pdf-metadata-table" });
+		this.addRow(table, "Producer", this.metadata.producer);
+		this.addRow(table, "Created", this.formatDate(this.metadata.creationDate));
+		this.addRow(table, "Modified", this.formatDate(this.metadata.modificationDate));
+		this.addRow(table, "Pages", this.metadata.pageCount > 0 ? this.metadata.pageCount.toString() : undefined);
+		this.addRow(table, "File size", this.formatFileSize(this.metadata.fileSize));
+
+		// Buttons
+		const buttonContainer = form.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const saveBtn = buttonContainer.createEl("button", {
+			text: "Save to PDF",
+			cls: "mod-cta",
+		});
+		saveBtn.addEventListener("click", () => this.saveMetadata());
+
+		const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => {
+			this.editMode = false;
+			this.render();
+		});
+	}
+
+	private addEditField(
+		container: HTMLElement,
+		label: string,
+		field: keyof PdfMetadata,
+		value: string
+	): void {
+		const row = container.createDiv({ cls: "pdf-metadata-field" });
+		row.createEl("label", { text: label });
+
+		const input = row.createEl("input", {
+			type: "text",
+			value: value,
+			cls: "pdf-metadata-input",
+		});
+
+		input.addEventListener("input", () => {
+			if (field === "keywords") {
+				this.editedMetadata.keywords = input.value
+					.split(",")
+					.map((k) => k.trim())
+					.filter(Boolean);
+			} else {
+				(this.editedMetadata as Record<string, unknown>)[field] = input.value || undefined;
+			}
+		});
+	}
+
+	private async saveMetadata(): Promise<void> {
+		if (!this.pdfFile) {
+			new Notice("No PDF file to save to");
+			return;
+		}
+
+		try {
+			await writeMetadataToPdf(this.pdfFile, this.editedMetadata, this.vault);
+			new Notice(`Metadata saved to ${this.pdfFile.name}`);
+
+			// Update displayed metadata
+			Object.assign(this.metadata, this.editedMetadata);
+			this.editMode = false;
+			this.render();
+		} catch (error) {
+			new Notice(`Failed to save metadata: ${error}`);
+		}
 	}
 
 	onClose(): void {
@@ -430,6 +558,133 @@ export class PdfAnnotationsModal extends Modal {
 		const g = normalize(color[1]);
 		const b = normalize(color[2]);
 		return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class ThumbnailGalleryModal extends Modal {
+	pdfFile: TFile;
+	vault: Vault;
+	pageCount: number = 0;
+	selectedPage: number = 1;
+	onSelect: (page: number) => void;
+	loading: boolean = true;
+
+	constructor(
+		app: App,
+		pdfFile: TFile,
+		onSelect: (page: number) => void,
+		initialPage: number = 1
+	) {
+		super(app);
+		this.pdfFile = pdfFile;
+		this.vault = app.vault;
+		this.onSelect = onSelect;
+		this.selectedPage = initialPage;
+	}
+
+	async onOpen(): Promise<void> {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal", "pdf-thumbnail-gallery");
+
+		contentEl.createEl("h2", { text: `Select Thumbnail Page: ${this.pdfFile.name}` });
+
+		const loadingEl = contentEl.createEl("p", { text: "Loading pages..." });
+
+		try {
+			this.pageCount = await getPdfPageCount(this.pdfFile, this.vault);
+			loadingEl.remove();
+			this.loading = false;
+			await this.renderGallery(contentEl);
+		} catch (error) {
+			loadingEl.setText(`Error loading PDF: ${error}`);
+		}
+	}
+
+	private async renderGallery(contentEl: HTMLElement): Promise<void> {
+		const info = contentEl.createEl("p", {
+			text: `${this.pageCount} pages total. Click to select thumbnail page.`,
+			cls: "pdf-gallery-info",
+		});
+
+		const grid = contentEl.createDiv({ cls: "pdf-thumbnail-grid" });
+
+		// Generate thumbnails for all pages (with small scale for gallery)
+		const galleryScale = 0.15;
+
+		for (let page = 1; page <= this.pageCount; page++) {
+			const item = grid.createDiv({
+				cls: `pdf-thumbnail-item${page === this.selectedPage ? " selected" : ""}`,
+			});
+
+			const imgContainer = item.createDiv({ cls: "pdf-thumbnail-img-container" });
+			const placeholder = imgContainer.createEl("div", {
+				cls: "pdf-thumbnail-placeholder",
+				text: `${page}`,
+			});
+
+			// Load thumbnail asynchronously
+			this.loadThumbnail(page, galleryScale, imgContainer, placeholder);
+
+			const label = item.createEl("span", {
+				text: `Page ${page}`,
+				cls: "pdf-thumbnail-label",
+			});
+
+			item.addEventListener("click", () => {
+				// Update selection
+				grid.querySelectorAll(".pdf-thumbnail-item").forEach((el) => {
+					el.removeClass("selected");
+				});
+				item.addClass("selected");
+				this.selectedPage = page;
+			});
+		}
+
+		// Buttons
+		const buttonContainer = contentEl.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const selectBtn = buttonContainer.createEl("button", {
+			text: "Use Selected Page",
+			cls: "mod-cta",
+		});
+		selectBtn.addEventListener("click", () => {
+			this.onSelect(this.selectedPage);
+			new Notice(`Thumbnail page set to ${this.selectedPage}`);
+			this.close();
+		});
+
+		const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.close());
+	}
+
+	private async loadThumbnail(
+		page: number,
+		scale: number,
+		container: HTMLElement,
+		placeholder: HTMLElement
+	): Promise<void> {
+		try {
+			const dataUrl = await generateThumbnailAsDataUrl(
+				this.pdfFile,
+				this.vault,
+				scale,
+				page
+			);
+
+			placeholder.remove();
+			const img = container.createEl("img", {
+				cls: "pdf-thumbnail-img",
+			});
+			img.src = dataUrl;
+		} catch (error) {
+			placeholder.setText(`${page} (error)`);
+		}
 	}
 
 	onClose(): void {

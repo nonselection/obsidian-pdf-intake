@@ -10,11 +10,24 @@ import {
 import { scanVault } from "./scanner";
 import { generateRenamePreview } from "./renamer";
 import { findDuplicates } from "./duplicates";
-import { generateThumbnail, saveThumbnail, getThumbnailPath } from "./thumbnail";
+import {
+	generateThumbnail,
+	saveThumbnail,
+	getThumbnailPath,
+	generateMultipleThumbnails,
+	saveMultipleThumbnails,
+} from "./thumbnail";
 import { syncFromCompanion, getCompanionForPdf, parseCompanionFrontmatter } from "./writeback";
 import { extractAnnotations, formatAnnotationsForNote, hasAnnotations } from "./annotations";
 import { PdfMetadataSettingTab } from "./settings";
-import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal, WritebackModal, PdfAnnotationsModal } from "./modal";
+import {
+	PdfMetadataModal,
+	RenamePreviewModal,
+	DuplicatesModal,
+	WritebackModal,
+	PdfAnnotationsModal,
+	ThumbnailGalleryModal,
+} from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
 	settings: PdfMetadataSettings = DEFAULT_SETTINGS;
@@ -130,6 +143,17 @@ export default class PdfMetadataPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "pdf") return false;
 				if (!checking) this.extractAnnotationsToNote(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "select-thumbnail-page",
+			name: "Select thumbnail page from gallery",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.openThumbnailGallery(file);
 				return true;
 			},
 		});
@@ -294,20 +318,40 @@ export default class PdfMetadataPlugin extends Plugin {
 		let thumbnailPath: string | undefined;
 		let annotationsContent: string | undefined;
 
-		// Generate thumbnail if enabled
+		// Generate thumbnail(s) if enabled
 		if (this.settings.generateThumbnails && file) {
 			try {
-				const thumbnailData = await generateThumbnail(
-					file,
-					this.app.vault,
-					this.settings.thumbnailScale
-				);
-				thumbnailPath = await saveThumbnail(
-					file,
-					thumbnailData,
-					this.settings.thumbnailFolder,
-					this.app.vault
-				);
+				if (this.settings.thumbnailMode === "multiple") {
+					// Generate multiple thumbnails
+					const thumbnails = await generateMultipleThumbnails(
+						file,
+						this.app.vault,
+						this.settings.thumbnailScale,
+						this.settings.thumbnailPageCount
+					);
+					const paths = await saveMultipleThumbnails(
+						file,
+						thumbnails,
+						this.settings.thumbnailFolder,
+						this.app.vault
+					);
+					// Use first thumbnail for embed, but all are saved
+					thumbnailPath = paths[0];
+				} else {
+					// Single page mode (also used for gallery mode)
+					const thumbnailData = await generateThumbnail(
+						file,
+						this.app.vault,
+						this.settings.thumbnailScale,
+						this.settings.thumbnailPage
+					);
+					thumbnailPath = await saveThumbnail(
+						file,
+						thumbnailData,
+						this.settings.thumbnailFolder,
+						this.app.vault
+					);
+				}
 			} catch (error) {
 				console.error(`Failed to generate thumbnail for ${file.path}:`, error);
 			}
@@ -381,6 +425,22 @@ export default class PdfMetadataPlugin extends Plugin {
 		if (!folder) {
 			await this.app.vault.createFolder(folderPath);
 		}
+	}
+
+	async openThumbnailGallery(file: TFile): Promise<void> {
+		new ThumbnailGalleryModal(
+			this.app,
+			file,
+			async (selectedPage) => {
+				this.settings.thumbnailPage = selectedPage;
+				await this.saveSettings();
+
+				// Regenerate thumbnail with selected page
+				const metadata = await extractMetadata(file, this.app.vault);
+				await this.writeCompanionNote(metadata, file);
+			},
+			this.settings.thumbnailPage
+		).open();
 	}
 
 	async batchRename(): Promise<void> {

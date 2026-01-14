@@ -39,6 +39,8 @@ export interface PdfAnnotation {
 
 export type OutputMode = "companion" | "index" | "sidecar";
 
+export type ThumbnailMode = "single" | "multiple" | "gallery";
+
 export interface PdfMetadataSettings {
 	scanFolders: string[];
 	ignorePatterns: string[];
@@ -53,6 +55,9 @@ export interface PdfMetadataSettings {
 	thumbnailFolder: string;
 	thumbnailScale: number;
 	generateThumbnails: boolean;
+	thumbnailMode: ThumbnailMode;
+	thumbnailPage: number;
+	thumbnailPageCount: number;
 	// Annotation settings
 	extractAnnotations: boolean;
 	annotationTypes: AnnotationType[];
@@ -75,6 +80,9 @@ export const DEFAULT_SETTINGS: PdfMetadataSettings = {
 	thumbnailFolder: "attachments/pdf-thumbnails",
 	thumbnailScale: 0.3,
 	generateThumbnails: true,
+	thumbnailMode: "single",
+	thumbnailPage: 1,
+	thumbnailPageCount: 3,
 	// Annotation defaults
 	extractAnnotations: true,
 	annotationTypes: ["Highlight", "Underline", "StrikeOut", "Squiggly", "FreeText", "Text", "Ink"],

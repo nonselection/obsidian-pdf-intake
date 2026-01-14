@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type PdfMetadataPlugin from "./main";
-import { OutputMode, AnnotationType, AnnotationGrouping } from "./types";
+import { OutputMode, AnnotationType, AnnotationGrouping, ThumbnailMode } from "./types";
 
 export class PdfMetadataSettingTab extends PluginSettingTab {
 	plugin: PdfMetadataPlugin;
@@ -169,6 +169,57 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 			);
 
 		if (this.plugin.settings.generateThumbnails) {
+			// Thumbnail mode
+			new Setting(containerEl)
+				.setName("Thumbnail mode")
+				.setDesc("How to generate thumbnails.")
+				.addDropdown((dropdown) =>
+					dropdown
+						.addOption("single", "Single page")
+						.addOption("multiple", "Multiple pages")
+						.addOption("gallery", "Gallery (select via command)")
+						.setValue(this.plugin.settings.thumbnailMode)
+						.onChange(async (value) => {
+							this.plugin.settings.thumbnailMode = value as ThumbnailMode;
+							await this.plugin.saveSettings();
+							this.display();
+						})
+				);
+
+			// Page number (for single mode)
+			if (this.plugin.settings.thumbnailMode === "single") {
+				new Setting(containerEl)
+					.setName("Thumbnail page")
+					.setDesc("Page number to use (0 = last page).")
+					.addText((text) =>
+						text
+							.setPlaceholder("1")
+							.setValue(this.plugin.settings.thumbnailPage.toString())
+							.onChange(async (value) => {
+								const num = parseInt(value) || 1;
+								this.plugin.settings.thumbnailPage = num;
+								await this.plugin.saveSettings();
+							})
+					);
+			}
+
+			// Page count (for multiple mode)
+			if (this.plugin.settings.thumbnailMode === "multiple") {
+				new Setting(containerEl)
+					.setName("Pages to generate")
+					.setDesc("Number of pages to generate thumbnails for.")
+					.addText((text) =>
+						text
+							.setPlaceholder("3")
+							.setValue(this.plugin.settings.thumbnailPageCount.toString())
+							.onChange(async (value) => {
+								const num = parseInt(value) || 3;
+								this.plugin.settings.thumbnailPageCount = Math.max(1, Math.min(num, 20));
+								await this.plugin.saveSettings();
+							})
+					);
+			}
+
 			// Thumbnail folder
 			new Setting(containerEl)
 				.setName("Thumbnail folder")

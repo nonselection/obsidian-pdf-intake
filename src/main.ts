@@ -28,6 +28,7 @@ import {
 	WritebackModal,
 	PdfAnnotationsModal,
 	ThumbnailGalleryModal,
+	CitationModal,
 } from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
@@ -155,6 +156,17 @@ export default class PdfMetadataPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "pdf") return false;
 				if (!checking) this.openThumbnailGallery(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "export-citation",
+			name: "Export citation (BibTeX/RIS)",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.exportCitation(file);
 				return true;
 			},
 		});
@@ -295,6 +307,11 @@ export default class PdfMetadataPlugin extends Plugin {
 		await this.writeCompanionNote(metadata, file);
 
 		new Notice(`Extracted ${annotations.length} annotation(s) from ${file.name}`);
+	}
+
+	async exportCitation(file: TFile): Promise<void> {
+		const metadata = await extractMetadata(file, this.app.vault);
+		new CitationModal(this.app, metadata, file).open();
 	}
 
 	async rebuildIndex(): Promise<void> {

@@ -5,6 +5,14 @@ import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
 import { writeMetadataToPdf } from "./writeback";
 import { getAnnotationStats } from "./annotations";
 import { getPdfPageCount, generateThumbnailAsDataUrl } from "./thumbnail";
+import {
+	generateCitation,
+	generateCiteKey,
+	getAvailableFormats,
+	getEntryTypes,
+	CitationFormat,
+	BibtexEntryType,
+} from "./citation";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
@@ -685,6 +693,158 @@ export class ThumbnailGalleryModal extends Modal {
 		} catch (error) {
 			placeholder.setText(`${page} (error)`);
 		}
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class CitationModal extends Modal {
+	metadata: PdfMetadata;
+	pdfFile: TFile;
+	format: CitationFormat = "bibtex";
+	entryType: BibtexEntryType = "misc";
+	citeKey: string;
+	citation: string = "";
+
+	constructor(app: App, metadata: PdfMetadata, pdfFile: TFile) {
+		super(app);
+		this.metadata = metadata;
+		this.pdfFile = pdfFile;
+		this.citeKey = generateCiteKey(metadata);
+		this.updateCitation();
+	}
+
+	onOpen(): void {
+		this.render();
+	}
+
+	private render(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal", "pdf-citation-modal");
+
+		contentEl.createEl("h2", { text: `Export Citation: ${this.pdfFile.name}` });
+
+		// Format selector
+		const formatRow = contentEl.createDiv({ cls: "pdf-citation-row" });
+		formatRow.createEl("label", { text: "Format:" });
+		const formatSelect = formatRow.createEl("select", { cls: "pdf-citation-select" });
+
+		for (const fmt of getAvailableFormats()) {
+			const option = formatSelect.createEl("option", {
+				text: fmt.label,
+				value: fmt.value,
+			});
+			if (fmt.value === this.format) {
+				option.selected = true;
+			}
+		}
+
+		formatSelect.addEventListener("change", () => {
+			this.format = formatSelect.value as CitationFormat;
+			this.updateCitation();
+			this.render();
+		});
+
+		// BibTeX-specific options
+		if (this.format === "bibtex") {
+			// Entry type selector
+			const typeRow = contentEl.createDiv({ cls: "pdf-citation-row" });
+			typeRow.createEl("label", { text: "Entry Type:" });
+			const typeSelect = typeRow.createEl("select", { cls: "pdf-citation-select" });
+
+			for (const type of getEntryTypes()) {
+				const option = typeSelect.createEl("option", {
+					text: type.label,
+					value: type.value,
+				});
+				if (type.value === this.entryType) {
+					option.selected = true;
+				}
+			}
+
+			typeSelect.addEventListener("change", () => {
+				this.entryType = typeSelect.value as BibtexEntryType;
+				this.updateCitation();
+				this.render();
+			});
+
+			// Cite key input
+			const keyRow = contentEl.createDiv({ cls: "pdf-citation-row" });
+			keyRow.createEl("label", { text: "Cite Key:" });
+			const keyInput = keyRow.createEl("input", {
+				type: "text",
+				value: this.citeKey,
+				cls: "pdf-citation-input",
+			});
+
+			keyInput.addEventListener("input", () => {
+				this.citeKey = keyInput.value || generateCiteKey(this.metadata);
+				this.updateCitation();
+				this.updatePreview(contentEl);
+			});
+		}
+
+		// Citation preview
+		const previewContainer = contentEl.createDiv({ cls: "pdf-citation-preview" });
+		previewContainer.createEl("h4", { text: "Preview:" });
+		const previewCode = previewContainer.createEl("pre", { cls: "pdf-citation-code" });
+		previewCode.createEl("code", { text: this.citation });
+
+		// Buttons
+		const buttonContainer = contentEl.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const copyBtn = buttonContainer.createEl("button", {
+			text: "Copy to Clipboard",
+			cls: "mod-cta",
+		});
+		copyBtn.addEventListener("click", () => {
+			navigator.clipboard.writeText(this.citation);
+			new Notice("Citation copied to clipboard");
+		});
+
+		const downloadBtn = buttonContainer.createEl("button", {
+			text: "Download",
+		});
+		downloadBtn.addEventListener("click", () => this.downloadCitation());
+
+		const closeBtn = buttonContainer.createEl("button", { text: "Close" });
+		closeBtn.addEventListener("click", () => this.close());
+	}
+
+	private updateCitation(): void {
+		this.citation = generateCitation(this.metadata, {
+			format: this.format,
+			citeKey: this.citeKey,
+			entryType: this.entryType,
+		});
+	}
+
+	private updatePreview(contentEl: HTMLElement): void {
+		const codeEl = contentEl.querySelector(".pdf-citation-code code");
+		if (codeEl) {
+			codeEl.textContent = this.citation;
+		}
+	}
+
+	private downloadCitation(): void {
+		const extension = this.format === "bibtex" ? "bib" : "ris";
+		const filename = `${this.citeKey}.${extension}`;
+		const mimeType = this.format === "bibtex" ? "application/x-bibtex" : "application/x-research-info-systems";
+
+		const blob = new Blob([this.citation], { type: mimeType });
+		const url = URL.createObjectURL(blob);
+
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = filename;
+		a.click();
+
+		URL.revokeObjectURL(url);
+		new Notice(`Downloaded ${filename}`);
 	}
 
 	onClose(): void {

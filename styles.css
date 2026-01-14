@@ -186,3 +186,58 @@
 	font-size: 0.85rem;
 	white-space: pre-wrap;
 }
+
+/* Citation Modal */
+.pdf-citation-modal {
+	min-width: 500px;
+}
+
+.pdf-citation-row {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	margin-bottom: 1rem;
+}
+
+.pdf-citation-row label {
+	min-width: 100px;
+	font-weight: 500;
+}
+
+.pdf-citation-select,
+.pdf-citation-input {
+	flex: 1;
+	padding: 0.5rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+}
+
+.pdf-citation-preview {
+	margin-top: 1.5rem;
+	padding: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+}
+
+.pdf-citation-preview h4 {
+	margin-top: 0;
+	margin-bottom: 0.75rem;
+	color: var(--text-muted);
+}
+
+.pdf-citation-code {
+	margin: 0;
+	padding: 1rem;
+	background: var(--background-primary);
+	border-radius: 4px;
+	overflow-x: auto;
+	max-height: 300px;
+}
+
+.pdf-citation-code code {
+	font-family: var(--font-monospace);
+	font-size: 0.85rem;
+	white-space: pre-wrap;
+	word-break: break-all;
+}

@@ -64,6 +64,11 @@ export interface PdfMetadataSettings {
 	annotationGrouping: AnnotationGrouping;
 	extractHighlightText: boolean;
 	includeAnnotationColors: boolean;
+	// Dataview integration settings
+	frontmatterTypeField: boolean;
+	frontmatterFileSize: boolean;
+	frontmatterCreatorProducer: boolean;
+	frontmatterKeywordsAsTags: boolean;
 }
 
 export const DEFAULT_SETTINGS: PdfMetadataSettings = {
@@ -89,4 +94,9 @@ export const DEFAULT_SETTINGS: PdfMetadataSettings = {
 	annotationGrouping: "type",
 	extractHighlightText: true,
 	includeAnnotationColors: true,
+	// Dataview integration defaults
+	frontmatterTypeField: true,
+	frontmatterFileSize: true,
+	frontmatterCreatorProducer: false,
+	frontmatterKeywordsAsTags: true,
 };

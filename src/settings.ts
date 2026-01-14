@@ -361,5 +361,82 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 						})
 				);
 		}
+
+		// Dataview Integration Section
+		containerEl.createEl("h3", { text: "Dataview Integration" });
+
+		new Setting(containerEl)
+			.setName("Add type field")
+			.setDesc("Add 'type: pdf' to frontmatter for easy Dataview filtering.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.frontmatterTypeField)
+					.onChange(async (value) => {
+						this.plugin.settings.frontmatterTypeField = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Include file size")
+			.setDesc("Add file size (human-readable and bytes) to frontmatter.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.frontmatterFileSize)
+					.onChange(async (value) => {
+						this.plugin.settings.frontmatterFileSize = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Include creator/producer")
+			.setDesc("Add PDF creator and producer software to frontmatter.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.frontmatterCreatorProducer)
+					.onChange(async (value) => {
+						this.plugin.settings.frontmatterCreatorProducer = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Keywords as tags")
+			.setDesc("Copy keywords to tags field for Obsidian's tag system.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.frontmatterKeywordsAsTags)
+					.onChange(async (value) => {
+						this.plugin.settings.frontmatterKeywordsAsTags = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// Example Dataview queries
+		const exampleContainer = containerEl.createDiv({ cls: "pdf-metadata-dataview-examples" });
+		exampleContainer.createEl("h4", { text: "Example Dataview Queries" });
+
+		const examples = [
+			{
+				title: "Table of all PDFs",
+				query: `TABLE title, author, pages, created\nFROM "PDF Notes"\nWHERE type = "pdf"\nSORT created DESC`,
+			},
+			{
+				title: "List PDFs by author",
+				query: `LIST\nFROM "PDF Notes"\nWHERE type = "pdf" AND author\nGROUP BY author`,
+			},
+			{
+				title: "Large PDFs (>100 pages)",
+				query: `TABLE title, pages, fileSize\nFROM "PDF Notes"\nWHERE type = "pdf" AND pages > 100`,
+			},
+		];
+
+		for (const example of examples) {
+			const exampleEl = exampleContainer.createDiv({ cls: "pdf-metadata-example" });
+			exampleEl.createEl("strong", { text: example.title });
+			const codeEl = exampleEl.createEl("pre");
+			codeEl.createEl("code", { text: example.query });
+		}
 	}
 }

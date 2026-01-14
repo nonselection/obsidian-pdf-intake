@@ -6,6 +6,7 @@ import {
 	generateIndexNote,
 	getCompanionNotePath,
 	getSidecarPath,
+	FrontmatterOptions,
 } from "./generator";
 import { scanVault } from "./scanner";
 import { generateRenamePreview } from "./renamer";
@@ -382,11 +383,13 @@ export default class PdfMetadataPlugin extends Plugin {
 			}
 		}
 
+		const frontmatterOptions = this.getFrontmatterOptions();
 		const content = generateCompanionNote(
 			metadata,
 			this.settings.companionTemplate,
 			thumbnailPath,
-			annotationsContent
+			annotationsContent,
+			frontmatterOptions
 		);
 
 		await this.ensureFolderExists(this.settings.outputFolder);
@@ -395,9 +398,13 @@ export default class PdfMetadataPlugin extends Plugin {
 
 	private async writeSidecarNote(metadata: PdfMetadata): Promise<void> {
 		const notePath = getSidecarPath(metadata.filePath);
+		const frontmatterOptions = this.getFrontmatterOptions();
 		const content = generateCompanionNote(
 			metadata,
-			this.settings.companionTemplate
+			this.settings.companionTemplate,
+			undefined,
+			undefined,
+			frontmatterOptions
 		);
 
 		await this.writeNote(notePath, content);
@@ -425,6 +432,15 @@ export default class PdfMetadataPlugin extends Plugin {
 		if (!folder) {
 			await this.app.vault.createFolder(folderPath);
 		}
+	}
+
+	private getFrontmatterOptions(): FrontmatterOptions {
+		return {
+			typeField: this.settings.frontmatterTypeField,
+			fileSize: this.settings.frontmatterFileSize,
+			creatorProducer: this.settings.frontmatterCreatorProducer,
+			keywordsAsTags: this.settings.frontmatterKeywordsAsTags,
+		};
 	}
 
 	async openThumbnailGallery(file: TFile): Promise<void> {

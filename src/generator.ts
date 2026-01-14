@@ -1,7 +1,29 @@
-import { PdfMetadata } from "./types";
+import { PdfMetadata, PdfMetadataSettings, DEFAULT_SETTINGS } from "./types";
 
-export function generateFrontmatter(metadata: PdfMetadata): string {
+export interface FrontmatterOptions {
+	typeField: boolean;
+	fileSize: boolean;
+	creatorProducer: boolean;
+	keywordsAsTags: boolean;
+}
+
+const DEFAULT_FRONTMATTER_OPTIONS: FrontmatterOptions = {
+	typeField: DEFAULT_SETTINGS.frontmatterTypeField,
+	fileSize: DEFAULT_SETTINGS.frontmatterFileSize,
+	creatorProducer: DEFAULT_SETTINGS.frontmatterCreatorProducer,
+	keywordsAsTags: DEFAULT_SETTINGS.frontmatterKeywordsAsTags,
+};
+
+export function generateFrontmatter(
+	metadata: PdfMetadata,
+	options: FrontmatterOptions = DEFAULT_FRONTMATTER_OPTIONS
+): string {
 	const lines: string[] = [];
+
+	// Type field for easy Dataview filtering
+	if (options.typeField) {
+		lines.push(`type: pdf`);
+	}
 
 	if (metadata.title) {
 		lines.push(`title: "${escapeYaml(metadata.title)}"`);
@@ -12,10 +34,19 @@ export function generateFrontmatter(metadata: PdfMetadata): string {
 	if (metadata.subject) {
 		lines.push(`subject: "${escapeYaml(metadata.subject)}"`);
 	}
+
+	// Keywords with proper quoting for Dataview
 	if (metadata.keywords?.length) {
-		const escaped = metadata.keywords.map((k) => escapeYaml(k));
+		const escaped = metadata.keywords.map((k) => `"${escapeYaml(k)}"`);
 		lines.push(`keywords: [${escaped.join(", ")}]`);
 	}
+
+	// Copy keywords to tags for Obsidian tag system
+	if (options.keywordsAsTags && metadata.keywords?.length) {
+		const tags = metadata.keywords.map((k) => formatTag(k));
+		lines.push(`tags: [${tags.join(", ")}]`);
+	}
+
 	if (metadata.creationDate) {
 		lines.push(`created: ${formatDate(metadata.creationDate)}`);
 	}
@@ -25,6 +56,23 @@ export function generateFrontmatter(metadata: PdfMetadata): string {
 	if (metadata.pageCount > 0) {
 		lines.push(`pages: ${metadata.pageCount}`);
 	}
+
+	// File size in human-readable format
+	if (options.fileSize && metadata.fileSize > 0) {
+		lines.push(`fileSize: "${formatFileSize(metadata.fileSize)}"`);
+		lines.push(`fileSizeBytes: ${metadata.fileSize}`);
+	}
+
+	// Creator and producer (PDF creation software)
+	if (options.creatorProducer) {
+		if (metadata.creator) {
+			lines.push(`creator: "${escapeYaml(metadata.creator)}"`);
+		}
+		if (metadata.producer) {
+			lines.push(`producer: "${escapeYaml(metadata.producer)}"`);
+		}
+	}
+
 	lines.push(`source: "[[${metadata.filePath}]]"`);
 
 	return lines.join("\n") + "\n";
@@ -34,9 +82,10 @@ export function generateCompanionNote(
 	metadata: PdfMetadata,
 	template: string,
 	thumbnailPath?: string,
-	annotationsContent?: string
+	annotationsContent?: string,
+	frontmatterOptions?: FrontmatterOptions
 ): string {
-	const frontmatter = generateFrontmatter(metadata);
+	const frontmatter = generateFrontmatter(metadata, frontmatterOptions);
 	const title = metadata.title || getFileNameWithoutExtension(metadata.filePath);
 	const embed = `![[${metadata.filePath}]]`;
 	const thumbnail = thumbnailPath ? `![[${thumbnailPath}]]` : "";
@@ -84,6 +133,30 @@ function escapeYaml(value: string): string {
 
 function formatDate(date: Date): string {
 	return date.toISOString().split("T")[0];
+}
+
+function formatFileSize(bytes: number): string {
+	const units = ["B", "KB", "MB", "GB"];
+	let size = bytes;
+	let unitIndex = 0;
+
+	while (size >= 1024 && unitIndex < units.length - 1) {
+		size /= 1024;
+		unitIndex++;
+	}
+
+	return `${size.toFixed(unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
+}
+
+function formatTag(keyword: string): string {
+	// Convert keyword to valid Obsidian tag format
+	// Remove special characters, replace spaces with hyphens
+	return keyword
+		.toLowerCase()
+		.replace(/[^\w\s-]/g, "")
+		.replace(/\s+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
 }
 
 function getFileNameWithoutExtension(path: string): string {

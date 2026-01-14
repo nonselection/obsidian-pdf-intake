@@ -140,3 +140,49 @@
 	padding: 0.25rem 0.5rem;
 	font-size: 0.8rem;
 }
+
+/* Settings indent for nested options */
+.pdf-metadata-indent {
+	padding-left: 2rem;
+}
+
+/* Dataview examples in settings */
+.pdf-metadata-dataview-examples {
+	margin-top: 1.5rem;
+	padding: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+}
+
+.pdf-metadata-dataview-examples h4 {
+	margin-top: 0;
+	margin-bottom: 1rem;
+	color: var(--text-muted);
+}
+
+.pdf-metadata-example {
+	margin-bottom: 1rem;
+}
+
+.pdf-metadata-example:last-child {
+	margin-bottom: 0;
+}
+
+.pdf-metadata-example strong {
+	display: block;
+	margin-bottom: 0.5rem;
+	font-size: 0.9rem;
+}
+
+.pdf-metadata-example pre {
+	margin: 0;
+	padding: 0.75rem;
+	background: var(--background-primary);
+	border-radius: 4px;
+	overflow-x: auto;
+}
+
+.pdf-metadata-example code {
+	font-size: 0.85rem;
+	white-space: pre-wrap;
+}

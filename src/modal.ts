@@ -24,6 +24,17 @@ import {
 	CitationFormat,
 	BibtexEntryType,
 } from "./citation";
+import {
+	LookupResult,
+	LookupSource,
+	autoLookup,
+	lookupDoi,
+	lookupIsbn,
+	extractDoi,
+	extractIsbn,
+	generateFilenameFromLookup,
+} from "./lookup";
+import { extractTextForLookup } from "./extractor";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
@@ -1027,6 +1038,299 @@ export class CitationModal extends Modal {
 
 		URL.revokeObjectURL(url);
 		new Notice(`Downloaded ${filename}`);
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class SmartRenameModal extends Modal {
+	pdfFile: TFile;
+	vault: Vault;
+	lookupResult: LookupResult | null = null;
+	lookupSource: LookupSource | null = null;
+	identifier: string | null = null;
+	loading: boolean = true;
+	manualIdentifier: string = "";
+	renameTemplate: string = "{author} - {title} ({year})";
+	newFilename: string = "";
+
+	constructor(app: App, pdfFile: TFile, renameTemplate?: string) {
+		super(app);
+		this.pdfFile = pdfFile;
+		this.vault = app.vault;
+		if (renameTemplate) {
+			this.renameTemplate = renameTemplate;
+		}
+	}
+
+	async onOpen(): Promise<void> {
+		this.render();
+		await this.performAutoLookup();
+	}
+
+	private render(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal", "pdf-smart-rename-modal");
+
+		contentEl.createEl("h2", { text: `Smart Rename: ${this.pdfFile.name}` });
+
+		if (this.loading) {
+			contentEl.createEl("p", {
+				text: "Searching for DOI/ISBN in PDF...",
+				cls: "pdf-smart-rename-loading",
+			});
+			return;
+		}
+
+		// Manual identifier input
+		const manualSection = contentEl.createDiv({ cls: "pdf-smart-rename-manual" });
+		manualSection.createEl("h4", { text: "Enter DOI or ISBN manually" });
+
+		const inputRow = manualSection.createDiv({ cls: "pdf-smart-rename-input-row" });
+		const input = inputRow.createEl("input", {
+			type: "text",
+			placeholder: "10.1000/xyz123 or 978-3-16-148410-0",
+			value: this.manualIdentifier,
+		});
+		input.addEventListener("input", () => {
+			this.manualIdentifier = input.value;
+		});
+
+		const lookupBtn = inputRow.createEl("button", {
+			text: "Lookup",
+			cls: "mod-cta",
+		});
+		lookupBtn.addEventListener("click", () => this.performManualLookup());
+
+		// Results section
+		if (this.lookupResult) {
+			this.renderResult(contentEl);
+		} else if (this.identifier) {
+			contentEl.createEl("p", {
+				text: `Found ${this.lookupSource === "crossref" ? "DOI" : "ISBN"}: ${this.identifier}, but lookup failed.`,
+				cls: "pdf-smart-rename-error",
+			});
+		} else {
+			contentEl.createEl("p", {
+				text: "No DOI or ISBN found in PDF. Enter one manually above.",
+				cls: "pdf-smart-rename-not-found",
+			});
+		}
+	}
+
+	private renderResult(contentEl: HTMLElement): void {
+		const resultSection = contentEl.createDiv({ cls: "pdf-smart-rename-result" });
+
+		resultSection.createEl("h4", {
+			text: `Found via ${this.lookupSource === "crossref" ? "CrossRef (DOI)" : "OpenLibrary (ISBN)"}`,
+		});
+
+		// Metadata display
+		const table = resultSection.createEl("table", { cls: "pdf-metadata-table" });
+
+		if (this.lookupResult!.title) {
+			this.addResultRow(table, "Title", this.lookupResult!.title);
+		}
+		if (this.lookupResult!.authors?.length) {
+			this.addResultRow(table, "Authors", this.lookupResult!.authors.join(", "));
+		}
+		if (this.lookupResult!.year) {
+			this.addResultRow(table, "Year", this.lookupResult!.year.toString());
+		}
+		if (this.lookupResult!.journal) {
+			this.addResultRow(table, "Journal", this.lookupResult!.journal);
+		}
+		if (this.lookupResult!.publisher) {
+			this.addResultRow(table, "Publisher", this.lookupResult!.publisher);
+		}
+		if (this.lookupResult!.doi) {
+			this.addResultRow(table, "DOI", this.lookupResult!.doi);
+		}
+		if (this.lookupResult!.isbn) {
+			this.addResultRow(table, "ISBN", this.lookupResult!.isbn);
+		}
+
+		// Rename template
+		const templateSection = resultSection.createDiv({ cls: "pdf-smart-rename-template" });
+		templateSection.createEl("label", { text: "Rename template:" });
+
+		const templateInput = templateSection.createEl("input", {
+			type: "text",
+			value: this.renameTemplate,
+		});
+		templateInput.addEventListener("input", () => {
+			this.renameTemplate = templateInput.value;
+			this.updatePreview();
+		});
+
+		templateSection.createEl("small", {
+			text: "Placeholders: {title}, {author}, {authors}, {year}, {journal}, {publisher}",
+		});
+
+		// Preview
+		this.newFilename = generateFilenameFromLookup(this.lookupResult!, this.renameTemplate);
+
+		const previewSection = resultSection.createDiv({ cls: "pdf-smart-rename-preview" });
+		previewSection.createEl("label", { text: "New filename:" });
+		previewSection.createEl("code", {
+			text: this.newFilename,
+			cls: "pdf-smart-rename-filename",
+		});
+
+		// Buttons
+		const buttons = resultSection.createDiv({ cls: "pdf-metadata-buttons" });
+
+		const renameBtn = buttons.createEl("button", {
+			text: "Rename File",
+			cls: "mod-cta",
+		});
+		renameBtn.addEventListener("click", () => this.executeRename());
+
+		const writeMetaBtn = buttons.createEl("button", {
+			text: "Write Metadata to PDF",
+		});
+		writeMetaBtn.addEventListener("click", () => this.writeMetadata());
+
+		const bothBtn = buttons.createEl("button", {
+			text: "Rename + Write Metadata",
+		});
+		bothBtn.addEventListener("click", () => this.renamePlusMetadata());
+
+		const cancelBtn = buttons.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.close());
+	}
+
+	private addResultRow(table: HTMLTableElement, label: string, value: string): void {
+		const row = table.createEl("tr");
+		row.createEl("td", { text: label, cls: "pdf-metadata-label" });
+		row.createEl("td", { text: value, cls: "pdf-metadata-value" });
+	}
+
+	private updatePreview(): void {
+		if (!this.lookupResult) return;
+
+		this.newFilename = generateFilenameFromLookup(this.lookupResult, this.renameTemplate);
+		const filenameEl = this.contentEl.querySelector(".pdf-smart-rename-filename");
+		if (filenameEl) {
+			filenameEl.textContent = this.newFilename;
+		}
+	}
+
+	private async performAutoLookup(): Promise<void> {
+		try {
+			// Extract text from first few pages
+			const text = await extractTextForLookup(this.pdfFile, this.vault, 3);
+
+			// Try auto lookup
+			const { result, source, identifier } = await autoLookup(text);
+
+			this.lookupResult = result;
+			this.lookupSource = source;
+			this.identifier = identifier;
+		} catch (error) {
+			console.error("Auto lookup failed:", error);
+		}
+
+		this.loading = false;
+		this.render();
+	}
+
+	private async performManualLookup(): Promise<void> {
+		if (!this.manualIdentifier.trim()) {
+			new Notice("Please enter a DOI or ISBN");
+			return;
+		}
+
+		this.loading = true;
+		this.render();
+
+		const input = this.manualIdentifier.trim();
+
+		// Try DOI first
+		const doi = extractDoi(input);
+		if (doi) {
+			const result = await lookupDoi(doi);
+			if (result) {
+				this.lookupResult = result;
+				this.lookupSource = "crossref";
+				this.identifier = doi;
+				this.loading = false;
+				this.render();
+				return;
+			}
+		}
+
+		// Try ISBN
+		const isbn = extractIsbn(input);
+		if (isbn) {
+			const result = await lookupIsbn(isbn);
+			if (result) {
+				this.lookupResult = result;
+				this.lookupSource = "openlibrary";
+				this.identifier = isbn;
+				this.loading = false;
+				this.render();
+				return;
+			}
+		}
+
+		this.loading = false;
+		this.render();
+		new Notice("Could not find metadata for the given identifier");
+	}
+
+	private async executeRename(): Promise<void> {
+		if (!this.newFilename) {
+			new Notice("No filename generated");
+			return;
+		}
+
+		const dir = this.pdfFile.parent?.path || "";
+		const newPath = dir ? `${dir}/${this.newFilename}` : this.newFilename;
+
+		// Check if target exists
+		if (this.vault.getAbstractFileByPath(newPath)) {
+			new Notice(`File already exists: ${this.newFilename}`);
+			return;
+		}
+
+		try {
+			await this.vault.rename(this.pdfFile, newPath);
+			new Notice(`Renamed to: ${this.newFilename}`);
+			this.close();
+		} catch (error) {
+			new Notice(`Rename failed: ${error}`);
+		}
+	}
+
+	private async writeMetadata(): Promise<void> {
+		if (!this.lookupResult) return;
+
+		try {
+			const { writeMetadataToPdf } = await import("./writeback");
+
+			await writeMetadataToPdf(this.pdfFile, {
+				title: this.lookupResult.title,
+				author: this.lookupResult.authors?.join(", "),
+				subject: this.lookupResult.abstract,
+				keywords: this.lookupResult.journal
+					? [this.lookupResult.journal]
+					: undefined,
+			}, this.vault);
+
+			new Notice("Metadata written to PDF");
+		} catch (error) {
+			new Notice(`Failed to write metadata: ${error}`);
+		}
+	}
+
+	private async renamePlusMetadata(): Promise<void> {
+		await this.writeMetadata();
+		await this.executeRename();
 	}
 
 	onClose(): void {

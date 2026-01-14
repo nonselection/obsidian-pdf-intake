@@ -2,280 +2,138 @@
 
 ## Overview
 
-This plugin extracts embedded metadata from PDF files in an Obsidian vault and makes it accessible through companion notes, index files, or sidecar metadata files.
+This plugin extracts embedded metadata from PDF files in an Obsidian vault and makes it accessible through companion notes, index files, or sidecar metadata files. It also supports annotation extraction, thumbnail generation, citation export, and smart renaming via DOI/ISBN lookup.
 
-**Status:** Concept / Not yet implemented
+**Status:** Implemented and functional
 
 ## Tech Stack
 
 - **Language:** TypeScript (strict mode)
 - **Build:** esbuild
-- **PDF Parsing:** pdf-lib or pdf-parse
+- **PDF Parsing:** pdf-lib (metadata), pdfjs-dist (rendering, text extraction)
 - **Framework:** Obsidian Plugin API
 
-## Project Structure (Planned)
+## Project Structure
 
 ```
 src/
   main.ts              # Plugin entry point, commands, lifecycle
   types.ts             # Interfaces, settings, defaults
-  extractor.ts         # PDF metadata extraction logic
+  extractor.ts         # PDF metadata and text extraction
   generator.ts         # Companion note / index generation
   scanner.ts           # Vault scanning for PDFs
-  watcher.ts           # File watcher for new PDFs
   settings.ts          # Settings tab UI
-  modal.ts             # Metadata view/edit modal
+  modal.ts             # All modals (metadata, rename, duplicates, etc.)
+  renamer.ts           # Batch rename logic
+  duplicates.ts        # Duplicate detection via content hash
+  thumbnail.ts         # Thumbnail generation from PDF pages
+  writeback.ts         # Write metadata back to PDF files
+  annotations.ts       # PDF annotation extraction
+  lookup.ts            # DOI/ISBN lookup via CrossRef/OpenLibrary
 
 styles.css             # Plugin styles
+manifest.json          # Obsidian plugin manifest
 ```
 
-## Core Concepts
+## Features
 
-### PDF Metadata Extraction
+### Implemented
+
+- **Metadata Extraction**: Extract title, author, subject, keywords, creator, producer, dates, page count
+- **Output Modes**: Companion notes, index file, or sidecar files
+- **Thumbnail Generation**: Single page, multiple pages, or gallery selection
+- **Annotation Extraction**: Highlights, notes, underlines, strikeouts with color support
+- **Metadata Write-back**: Modify PDF metadata from Obsidian
+- **Batch Rename**: Rename PDFs based on metadata template
+- **Smart Rename**: DOI/ISBN lookup via CrossRef and OpenLibrary APIs
+- **Duplicate Detection**: Find duplicates by SHA-256 content hash
+- **Citation Export**: BibTeX and RIS format export
+- **Dataview Integration**: Frontmatter fields for Dataview queries
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `Scan vault for PDFs` | Process all PDFs in vault |
+| `Extract metadata for current PDF` | Extract metadata for active PDF |
+| `View PDF metadata` | Show metadata modal with edit option |
+| `Generate companion note` | Create companion note for active PDF |
+| `Rebuild PDF index` | Regenerate the PDF index file |
+| `Batch rename PDFs` | Preview and execute batch rename |
+| `Smart rename PDF (DOI/ISBN lookup)` | Lookup metadata online and rename |
+| `Find duplicate PDFs` | Scan for duplicate files |
+| `Generate thumbnail` | Create thumbnail for active PDF |
+| `Select thumbnail page from gallery` | Choose thumbnail page visually |
+| `View PDF annotations` | Show annotations in modal |
+| `Extract annotations from current PDF` | Add annotations to companion note |
+| `Export citation (BibTeX/RIS)` | Export citation in academic format |
+| `Sync metadata from companion note` | Write frontmatter back to PDF |
+
+## Core Interfaces
 
 ```typescript
 interface PdfMetadata {
-  // Standard PDF properties
   title?: string;
   author?: string;
   subject?: string;
   keywords?: string[];
-  creator?: string;       // Application that created the PDF
-  producer?: string;      // PDF producer
+  creator?: string;
+  producer?: string;
   creationDate?: Date;
   modificationDate?: Date;
-
-  // Derived properties
   pageCount: number;
-  fileSize: number;       // In bytes
-  filePath: string;       // Vault-relative path
+  fileSize: number;
+  filePath: string;
+}
+
+interface PdfAnnotation {
+  type: "highlight" | "note" | "underline" | "strikeout" | "freetext";
+  content?: string;
+  page: number;
+  color?: string;
+  rect?: number[];
+  creationDate?: Date;
+  modificationDate?: Date;
+}
+
+interface LookupResult {
+  title?: string;
+  authors?: string[];
+  year?: number;
+  journal?: string;
+  publisher?: string;
+  doi?: string;
+  isbn?: string;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+  abstract?: string;
 }
 ```
 
-### Extraction with pdf-lib
+## External APIs
 
-```typescript
-import { PDFDocument } from 'pdf-lib';
+### CrossRef (DOI Lookup)
+- Endpoint: `https://api.crossref.org/works/{DOI}`
+- Returns: Title, authors, journal, year, volume, issue, pages, abstract
 
-async function extractMetadata(file: TFile, vault: Vault): Promise<PdfMetadata> {
-  const buffer = await vault.readBinary(file);
-  const pdf = await PDFDocument.load(buffer);
-
-  const title = pdf.getTitle();
-  const author = pdf.getAuthor();
-  const subject = pdf.getSubject();
-  const keywords = pdf.getKeywords()?.split(',').map(k => k.trim());
-  const creator = pdf.getCreator();
-  const producer = pdf.getProducer();
-  const creationDate = pdf.getCreationDate();
-  const modificationDate = pdf.getModificationDate();
-  const pageCount = pdf.getPageCount();
-
-  return {
-    title,
-    author,
-    subject,
-    keywords,
-    creator,
-    producer,
-    creationDate,
-    modificationDate,
-    pageCount,
-    fileSize: buffer.byteLength,
-    filePath: file.path,
-  };
-}
-```
-
-### Alternative: pdf-parse
-
-```typescript
-import pdf from 'pdf-parse';
-
-async function extractWithPdfParse(file: TFile, vault: Vault): Promise<PdfMetadata> {
-  const buffer = await vault.readBinary(file);
-  const data = await pdf(Buffer.from(buffer));
-
-  return {
-    title: data.info?.Title,
-    author: data.info?.Author,
-    subject: data.info?.Subject,
-    keywords: data.info?.Keywords?.split(',').map(k => k.trim()),
-    creator: data.info?.Creator,
-    producer: data.info?.Producer,
-    creationDate: data.info?.CreationDate ? new Date(data.info.CreationDate) : undefined,
-    modificationDate: data.info?.ModDate ? new Date(data.info.ModDate) : undefined,
-    pageCount: data.numpages,
-    fileSize: buffer.byteLength,
-    filePath: file.path,
-  };
-}
-```
-
-## Output Modes
-
-### 1. Companion Notes
-
-```typescript
-function generateCompanionNote(metadata: PdfMetadata, template: string): string {
-  const frontmatter = generateFrontmatter(metadata);
-  const body = template
-    .replace('{{title}}', metadata.title || 'Untitled')
-    .replace('{{embed}}', `![[${metadata.filePath}]]`);
-
-  return `---\n${frontmatter}---\n\n${body}`;
-}
-
-function generateFrontmatter(metadata: PdfMetadata): string {
-  const lines: string[] = [];
-
-  if (metadata.title) lines.push(`title: "${metadata.title}"`);
-  if (metadata.author) lines.push(`author: "${metadata.author}"`);
-  if (metadata.subject) lines.push(`subject: "${metadata.subject}"`);
-  if (metadata.keywords?.length) {
-    lines.push(`keywords: [${metadata.keywords.join(', ')}]`);
-  }
-  if (metadata.creationDate) {
-    lines.push(`created: ${metadata.creationDate.toISOString().split('T')[0]}`);
-  }
-  lines.push(`pages: ${metadata.pageCount}`);
-  lines.push(`source: "[[${metadata.filePath}]]"`);
-
-  return lines.join('\n') + '\n';
-}
-```
-
-### 2. Index Note
-
-```typescript
-function generateIndexNote(allMetadata: PdfMetadata[]): string {
-  const header = '| File | Title | Author | Pages | Created |\n|------|-------|--------|-------|---------|';
-
-  const rows = allMetadata.map(m => {
-    const file = `[[${m.filePath}]]`;
-    const title = m.title || '-';
-    const author = m.author || '-';
-    const pages = m.pageCount;
-    const created = m.creationDate?.toISOString().split('T')[0] || '-';
-    return `| ${file} | ${title} | ${author} | ${pages} | ${created} |`;
-  });
-
-  return `# PDF Index\n\n${header}\n${rows.join('\n')}`;
-}
-```
-
-### 3. Sidecar Files
-
-```typescript
-function getSidecarPath(pdfPath: string): string {
-  return `${pdfPath}.metadata.md`;
-}
-
-async function writeSidecar(metadata: PdfMetadata, vault: Vault): Promise<void> {
-  const sidecarPath = getSidecarPath(metadata.filePath);
-  const content = generateCompanionNote(metadata, '# {{title}}\n\n{{embed}}');
-
-  await vault.create(sidecarPath, content);
-}
-```
-
-## Vault Scanning
-
-```typescript
-async function scanVault(vault: Vault, settings: Settings): Promise<TFile[]> {
-  const pdfs: TFile[] = [];
-
-  for (const file of vault.getFiles()) {
-    if (file.extension !== 'pdf') continue;
-    if (shouldIgnore(file.path, settings.ignorePatterns)) continue;
-    if (!isInScanFolders(file.path, settings.scanFolders)) continue;
-
-    pdfs.push(file);
-  }
-
-  return pdfs;
-}
-
-function shouldIgnore(path: string, patterns: string[]): boolean {
-  return patterns.some(pattern => {
-    const regex = new RegExp(pattern.replace('*', '.*'));
-    return regex.test(path);
-  });
-}
-```
-
-## File Watcher
-
-```typescript
-function setupWatcher(plugin: Plugin, settings: Settings): void {
-  plugin.registerEvent(
-    plugin.app.vault.on('create', async (file) => {
-      if (!(file instanceof TFile)) return;
-      if (file.extension !== 'pdf') return;
-      if (!settings.watchForNewPdfs) return;
-
-      const metadata = await extractMetadata(file, plugin.app.vault);
-      await handleNewPdf(metadata, settings);
-    })
-  );
-}
-```
+### OpenLibrary (ISBN Lookup)
+- Endpoint: `https://openlibrary.org/isbn/{ISBN}.json`
+- Returns: Title, authors, publisher, year
 
 ## Settings
 
-```typescript
-interface PdfMetadataSettings {
-  scanFolders: string[];           // Folders to scan, empty = all
-  ignorePatterns: string[];        // Glob patterns to ignore
-  outputMode: 'companion' | 'index' | 'sidecar';
-  outputFolder: string;            // For companion notes
-  indexPath: string;               // For index mode
-  autoScanOnOpen: boolean;
-  watchForNewPdfs: boolean;
-  companionTemplate: string;       // Customizable template
-  overwriteExisting: boolean;
-}
+Key settings available in the plugin settings tab:
 
-const DEFAULT_SETTINGS: PdfMetadataSettings = {
-  scanFolders: [],
-  ignorePatterns: ['**/node_modules/**', '**/.obsidian/**'],
-  outputMode: 'companion',
-  outputFolder: 'PDF Notes',
-  indexPath: 'PDF Index.md',
-  autoScanOnOpen: false,
-  watchForNewPdfs: true,
-  companionTemplate: '# {{title}}\n\n{{embed}}\n\n## Notes\n\n',
-  overwriteExisting: false,
-};
-```
-
-## Commands
-
-```typescript
-// In onload():
-this.addCommand({
-  id: 'scan-vault-pdfs',
-  name: 'Scan vault for PDFs',
-  callback: () => this.scanAndProcess(),
-});
-
-this.addCommand({
-  id: 'extract-current-pdf',
-  name: 'Extract metadata for current PDF',
-  checkCallback: (checking) => {
-    const file = this.app.workspace.getActiveFile();
-    if (file?.extension !== 'pdf') return false;
-    if (!checking) this.extractSingle(file);
-    return true;
-  },
-});
-
-this.addCommand({
-  id: 'rebuild-pdf-index',
-  name: 'Rebuild PDF index',
-  callback: () => this.rebuildIndex(),
-});
-```
+- **Scan Folders**: Limit scanning to specific folders
+- **Ignore Patterns**: Glob patterns to exclude
+- **Output Mode**: companion / index / sidecar
+- **Output Folder**: Where to create companion notes
+- **Companion Template**: Customizable note template
+- **Thumbnail Settings**: Enable, folder, scale, page selection mode
+- **Annotation Settings**: Types to extract, grouping, colors
+- **Frontmatter Options**: Type field, file size, keywords as tags
+- **Rename Template**: Pattern for batch/smart rename
 
 ## Dependencies
 
@@ -283,33 +141,17 @@ this.addCommand({
 {
   "dependencies": {
     "obsidian": "latest",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "@types/node": "^16.11.6",
+    "builtin-modules": "^3.3.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.0.0"
   }
 }
 ```
-
-## Potential Issues
-
-- **Large PDFs**: May need streaming or chunked reading
-- **Encrypted PDFs**: pdf-lib can't read encrypted files without password
-- **Corrupted PDFs**: Need error handling for malformed files
-- **Missing metadata**: Many PDFs have no embedded metadata
-- **Character encoding**: Non-ASCII characters in metadata may need handling
-- **Performance**: Scanning hundreds of PDFs could be slow
-
-## Future Features
-
-- **OCR integration**: Extract text from scanned PDFs
-- **Thumbnail extraction**: Generate preview images
-- **Full-text indexing**: Index PDF content for search
-- **Write-back**: Modify PDF metadata from Obsidian
-- **Batch rename**: Rename PDFs based on metadata
-- **Duplicate detection**: Find duplicate PDFs by content hash
 
 ## Development
 
@@ -317,17 +159,26 @@ this.addCommand({
 # Install dependencies
 npm install
 
-# Build
+# Build for production
 npm run build
 
-# Development mode
+# Development mode (watch)
 npm run dev
+
+# Deploy to vault (adjust path as needed)
+cp main.js styles.css manifest.json ~/vault/.obsidian/plugins/pdf-metadata/
 ```
 
-## Testing
+## Known Limitations
 
-1. Create test vault with various PDFs
-2. Include: PDFs with full metadata, empty metadata, encrypted, corrupted
-3. Test each output mode
-4. Test file watcher with new PDF drops
-5. Test performance with 100+ PDFs
+- **Encrypted PDFs**: Cannot read password-protected files
+- **Large PDFs**: Thumbnail generation may be slow for very large files
+- **Missing Metadata**: Many PDFs have no embedded metadata
+- **API Rate Limits**: CrossRef/OpenLibrary may rate limit frequent requests
+
+## Future Ideas
+
+- OCR integration for scanned PDFs
+- Full-text search indexing
+- PDF merge/split functionality
+- Zotero/Mendeley integration

@@ -29,6 +29,7 @@ import {
 	PdfAnnotationsModal,
 	ThumbnailGalleryModal,
 	CitationModal,
+	SmartRenameModal,
 } from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
@@ -167,6 +168,17 @@ export default class PdfMetadataPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "pdf") return false;
 				if (!checking) this.exportCitation(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "smart-rename-pdf",
+			name: "Smart rename PDF (DOI/ISBN lookup)",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.smartRenamePdf(file);
 				return true;
 			},
 		});
@@ -312,6 +324,21 @@ export default class PdfMetadataPlugin extends Plugin {
 	async exportCitation(file: TFile): Promise<void> {
 		const metadata = await extractMetadata(file, this.app.vault);
 		new CitationModal(this.app, metadata, file).open();
+	}
+
+	async smartRenamePdf(file: TFile): Promise<void> {
+		new SmartRenameModal(
+			this.app,
+			file,
+			this.settings.renameTemplate,
+			async () => {
+				// Regenerate companion note after rename
+				const newFile = this.app.vault.getAbstractFileByPath(file.path);
+				if (newFile instanceof TFile) {
+					await this.processFile(newFile);
+				}
+			}
+		).open();
 	}
 
 	async rebuildIndex(): Promise<void> {

@@ -333,3 +333,165 @@
 	border-radius: 4px;
 	background: var(--background-primary);
 }
+
+/* Smart Rename Modal */
+.pdf-smart-rename-modal {
+	min-width: 500px;
+}
+
+.pdf-smart-rename-loading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 2rem;
+	color: var(--text-muted);
+}
+
+.pdf-smart-rename-loading .spinner {
+	width: 24px;
+	height: 24px;
+	border: 3px solid var(--background-modifier-border);
+	border-top-color: var(--interactive-accent);
+	border-radius: 50%;
+	animation: pdf-spinner 1s linear infinite;
+	margin-bottom: 1rem;
+}
+
+@keyframes pdf-spinner {
+	to { transform: rotate(360deg); }
+}
+
+.pdf-smart-rename-result {
+	margin-bottom: 1.5rem;
+}
+
+.pdf-smart-rename-source {
+	display: inline-block;
+	padding: 0.25rem 0.5rem;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-radius: 4px;
+	font-size: 0.8rem;
+	font-weight: 500;
+	margin-bottom: 1rem;
+}
+
+.pdf-smart-rename-identifier {
+	display: block;
+	color: var(--text-muted);
+	font-family: var(--font-monospace);
+	font-size: 0.85rem;
+	margin-bottom: 1rem;
+}
+
+.pdf-smart-rename-info {
+	margin-bottom: 1rem;
+}
+
+.pdf-smart-rename-info p {
+	margin: 0.25rem 0;
+}
+
+.pdf-smart-rename-info strong {
+	color: var(--text-muted);
+	display: inline-block;
+	min-width: 80px;
+}
+
+.pdf-smart-rename-no-result {
+	color: var(--text-muted);
+	font-style: italic;
+	margin-bottom: 1rem;
+}
+
+.pdf-smart-rename-manual {
+	margin-bottom: 1.5rem;
+	padding: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+}
+
+.pdf-smart-rename-manual h4 {
+	margin-top: 0;
+	margin-bottom: 0.75rem;
+	font-size: 0.9rem;
+}
+
+.pdf-smart-rename-manual-row {
+	display: flex;
+	gap: 0.5rem;
+}
+
+.pdf-smart-rename-manual input {
+	flex: 1;
+	padding: 0.5rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	font-family: var(--font-monospace);
+}
+
+.pdf-smart-rename-template {
+	margin-bottom: 1.5rem;
+}
+
+.pdf-smart-rename-template label {
+	display: block;
+	margin-bottom: 0.5rem;
+	font-weight: 500;
+}
+
+.pdf-smart-rename-template input {
+	width: 100%;
+	padding: 0.5rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	font-family: var(--font-monospace);
+}
+
+.pdf-smart-rename-template small {
+	display: block;
+	margin-top: 0.25rem;
+	color: var(--text-muted);
+	font-size: 0.8rem;
+}
+
+.pdf-smart-rename-preview {
+	padding: 1rem;
+	background: var(--background-secondary);
+	border-radius: 8px;
+	margin-bottom: 1.5rem;
+}
+
+.pdf-smart-rename-preview h4 {
+	margin-top: 0;
+	margin-bottom: 0.75rem;
+	color: var(--text-muted);
+	font-size: 0.9rem;
+}
+
+.pdf-smart-rename-preview-old {
+	color: var(--text-muted);
+	text-decoration: line-through;
+	margin-bottom: 0.5rem;
+	word-break: break-all;
+}
+
+.pdf-smart-rename-preview-new {
+	font-weight: 500;
+	color: var(--text-success);
+	word-break: break-all;
+}
+
+.pdf-smart-rename-buttons {
+	display: flex;
+	gap: 0.5rem;
+	justify-content: flex-end;
+}
+
+.pdf-smart-rename-buttons button.mod-cta {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}

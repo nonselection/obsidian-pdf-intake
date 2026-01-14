@@ -141,16 +141,63 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 		// Companion template
 		new Setting(containerEl)
 			.setName("Companion note template")
-			.setDesc("Template for companion notes. Use {{title}} and {{embed}} as placeholders.")
+			.setDesc("Template for companion notes. Placeholders: {{title}}, {{embed}}, {{thumbnail}}")
 			.addTextArea((text) =>
 				text
-					.setPlaceholder("# {{title}}\n\n{{embed}}\n\n## Notes\n\n")
+					.setPlaceholder("# {{title}}\n\n{{thumbnail}}\n\n{{embed}}\n\n## Notes\n\n")
 					.setValue(this.plugin.settings.companionTemplate)
 					.onChange(async (value) => {
 						this.plugin.settings.companionTemplate = value;
 						await this.plugin.saveSettings();
 					})
 			);
+
+		containerEl.createEl("h3", { text: "Thumbnails" });
+
+		// Generate thumbnails
+		new Setting(containerEl)
+			.setName("Generate thumbnails")
+			.setDesc("Generate thumbnail images from PDF first page.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.generateThumbnails)
+					.onChange(async (value) => {
+						this.plugin.settings.generateThumbnails = value;
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		if (this.plugin.settings.generateThumbnails) {
+			// Thumbnail folder
+			new Setting(containerEl)
+				.setName("Thumbnail folder")
+				.setDesc("Folder to store generated thumbnails.")
+				.addText((text) =>
+					text
+						.setPlaceholder("attachments/pdf-thumbnails")
+						.setValue(this.plugin.settings.thumbnailFolder)
+						.onChange(async (value) => {
+							this.plugin.settings.thumbnailFolder = value;
+							await this.plugin.saveSettings();
+						})
+				);
+
+			// Thumbnail scale
+			new Setting(containerEl)
+				.setName("Thumbnail scale")
+				.setDesc(`Scale factor for thumbnails (${Math.round(this.plugin.settings.thumbnailScale * 100)}%)`)
+				.addSlider((slider) =>
+					slider
+						.setLimits(0.1, 1.0, 0.1)
+						.setValue(this.plugin.settings.thumbnailScale)
+						.onChange(async (value) => {
+							this.plugin.settings.thumbnailScale = value;
+							await this.plugin.saveSettings();
+							this.display();
+						})
+				);
+		}
 
 		// Rename template
 		new Setting(containerEl)

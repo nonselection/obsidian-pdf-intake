@@ -16,7 +16,8 @@
 	"author": "Luca Gabriel Oelfke",
 	"license": "MIT",
 	"dependencies": {
-		"pdf-lib": "^1.17.1"
+		"pdf-lib": "^1.17.1",
+		"pdfjs-dist": "^4.0.379"
 	},
 	"devDependencies": {
 		"@types/node": "^16.11.6",

@@ -32,15 +32,18 @@ export function generateFrontmatter(metadata: PdfMetadata): string {
 
 export function generateCompanionNote(
 	metadata: PdfMetadata,
-	template: string
+	template: string,
+	thumbnailPath?: string
 ): string {
 	const frontmatter = generateFrontmatter(metadata);
 	const title = metadata.title || getFileNameWithoutExtension(metadata.filePath);
 	const embed = `![[${metadata.filePath}]]`;
+	const thumbnail = thumbnailPath ? `![[${thumbnailPath}]]` : "";
 
 	const body = template
 		.replace(/\{\{title\}\}/g, title)
-		.replace(/\{\{embed\}\}/g, embed);
+		.replace(/\{\{embed\}\}/g, embed)
+		.replace(/\{\{thumbnail\}\}/g, thumbnail);
 
 	return `---\n${frontmatter}---\n\n${body}`;
 }

@@ -10,8 +10,10 @@ import {
 import { scanVault } from "./scanner";
 import { generateRenamePreview } from "./renamer";
 import { findDuplicates } from "./duplicates";
+import { generateThumbnail, saveThumbnail, getThumbnailPath } from "./thumbnail";
+import { syncFromCompanion, getCompanionForPdf, parseCompanionFrontmatter } from "./writeback";
 import { PdfMetadataSettingTab } from "./settings";
-import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal } from "./modal";
+import { PdfMetadataModal, RenamePreviewModal, DuplicatesModal, WritebackModal } from "./modal";
 
 export default class PdfMetadataPlugin extends Plugin {
 	settings: PdfMetadataSettings = DEFAULT_SETTINGS;
@@ -78,6 +80,37 @@ export default class PdfMetadataPlugin extends Plugin {
 			callback: () => this.findDuplicatePdfs(),
 		});
 
+		this.addCommand({
+			id: "generate-thumbnail",
+			name: "Generate thumbnail for current PDF",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "pdf") return false;
+				if (!checking) this.generateThumbnailForFile(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "sync-metadata-from-companion",
+			name: "Sync metadata from companion note to PDF",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+
+				// Check if it's a companion note or PDF
+				if (file.extension === "pdf") {
+					if (!checking) this.syncFromCompanionForPdf(file);
+					return true;
+				}
+				if (file.extension === "md") {
+					if (!checking) this.syncFromCompanionNote(file);
+					return true;
+				}
+				return false;
+			},
+		});
+
 		if (this.settings.watchForNewPdfs) {
 			this.setupFileWatcher();
 		}
@@ -138,7 +171,7 @@ export default class PdfMetadataPlugin extends Plugin {
 
 			switch (this.settings.outputMode) {
 				case "companion":
-					await this.writeCompanionNote(metadata);
+					await this.writeCompanionNote(metadata, file);
 					break;
 				case "sidecar":
 					await this.writeSidecarNote(metadata);
@@ -168,12 +201,12 @@ export default class PdfMetadataPlugin extends Plugin {
 
 	async viewMetadata(file: TFile): Promise<void> {
 		const metadata = await extractMetadata(file, this.app.vault);
-		new PdfMetadataModal(this.app, metadata).open();
+		new PdfMetadataModal(this.app, metadata, file).open();
 	}
 
 	async generateCompanion(file: TFile): Promise<void> {
 		const metadata = await extractMetadata(file, this.app.vault);
-		await this.writeCompanionNote(metadata);
+		await this.writeCompanionNote(metadata, file);
 		new Notice(`Created companion note for ${file.name}`);
 	}
 
@@ -190,15 +223,37 @@ export default class PdfMetadataPlugin extends Plugin {
 		new Notice(`Index rebuilt with ${allMetadata.length} PDF(s).`);
 	}
 
-	private async writeCompanionNote(metadata: PdfMetadata): Promise<void> {
+	private async writeCompanionNote(metadata: PdfMetadata, file?: TFile): Promise<void> {
 		const notePath = getCompanionNotePath(
 			metadata.filePath,
 			this.settings.outputFolder
 		);
 
+		let thumbnailPath: string | undefined;
+
+		// Generate thumbnail if enabled
+		if (this.settings.generateThumbnails && file) {
+			try {
+				const thumbnailData = await generateThumbnail(
+					file,
+					this.app.vault,
+					this.settings.thumbnailScale
+				);
+				thumbnailPath = await saveThumbnail(
+					file,
+					thumbnailData,
+					this.settings.thumbnailFolder,
+					this.app.vault
+				);
+			} catch (error) {
+				console.error(`Failed to generate thumbnail for ${file.path}:`, error);
+			}
+		}
+
 		const content = generateCompanionNote(
 			metadata,
-			this.settings.companionTemplate
+			this.settings.companionTemplate,
+			thumbnailPath
 		);
 
 		await this.ensureFolderExists(this.settings.outputFolder);
@@ -294,5 +349,87 @@ export default class PdfMetadataPlugin extends Plugin {
 		);
 
 		new DuplicatesModal(this.app, duplicates, this.app.vault).open();
+	}
+
+	async generateThumbnailForFile(file: TFile): Promise<void> {
+		new Notice(`Generating thumbnail for ${file.name}...`);
+
+		try {
+			const thumbnailData = await generateThumbnail(
+				file,
+				this.app.vault,
+				this.settings.thumbnailScale
+			);
+			const thumbnailPath = await saveThumbnail(
+				file,
+				thumbnailData,
+				this.settings.thumbnailFolder,
+				this.app.vault
+			);
+			new Notice(`Thumbnail saved: ${thumbnailPath}`);
+		} catch (error) {
+			new Notice(`Failed to generate thumbnail: ${error}`);
+			console.error(error);
+		}
+	}
+
+	async syncFromCompanionForPdf(pdfFile: TFile): Promise<void> {
+		const companionFile = getCompanionForPdf(
+			pdfFile.path,
+			this.settings.outputFolder,
+			this.app.vault
+		);
+
+		if (!companionFile) {
+			new Notice(`No companion note found for ${pdfFile.name}`);
+			return;
+		}
+
+		const content = await this.app.vault.read(companionFile);
+		const metadata = parseCompanionFrontmatter(content);
+
+		if (Object.keys(metadata).length === 0) {
+			new Notice("No metadata found in companion note");
+			return;
+		}
+
+		new WritebackModal(
+			this.app,
+			pdfFile,
+			metadata,
+			() => new Notice(`Metadata synced to ${pdfFile.name}`)
+		).open();
+	}
+
+	async syncFromCompanionNote(companionFile: TFile): Promise<void> {
+		const content = await this.app.vault.read(companionFile);
+		const metadata = parseCompanionFrontmatter(content);
+
+		// Extract source PDF path from frontmatter
+		const sourceMatch = content.match(/^source:\s*"?\[\[([^\]]+)\]\]"?$/m);
+		if (!sourceMatch) {
+			new Notice("No source PDF found in companion note");
+			return;
+		}
+
+		const pdfPath = sourceMatch[1];
+		const pdfFile = this.app.vault.getAbstractFileByPath(pdfPath);
+
+		if (!(pdfFile instanceof TFile)) {
+			new Notice(`PDF not found: ${pdfPath}`);
+			return;
+		}
+
+		if (Object.keys(metadata).length === 0) {
+			new Notice("No metadata found in companion note");
+			return;
+		}
+
+		new WritebackModal(
+			this.app,
+			pdfFile,
+			metadata,
+			() => new Notice(`Metadata synced to ${pdfFile.name}`)
+		).open();
 	}
 }

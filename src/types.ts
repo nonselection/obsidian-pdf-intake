@@ -26,6 +26,9 @@ export interface PdfMetadataSettings {
 	companionTemplate: string;
 	overwriteExisting: boolean;
 	renameTemplate: string;
+	thumbnailFolder: string;
+	thumbnailScale: number;
+	generateThumbnails: boolean;
 }
 
 export const DEFAULT_SETTINGS: PdfMetadataSettings = {
@@ -36,7 +39,10 @@ export const DEFAULT_SETTINGS: PdfMetadataSettings = {
 	indexPath: "PDF Index.md",
 	autoScanOnOpen: false,
 	watchForNewPdfs: true,
-	companionTemplate: "# {{title}}\n\n{{embed}}\n\n## Notes\n\n",
+	companionTemplate: "# {{title}}\n\n{{thumbnail}}\n\n{{embed}}\n\n## Notes\n\n",
 	overwriteExisting: false,
 	renameTemplate: "{author} - {title}",
+	thumbnailFolder: "attachments/pdf-thumbnails",
+	thumbnailScale: 0.3,
+	generateThumbnails: true,
 };

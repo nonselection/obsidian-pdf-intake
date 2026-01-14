@@ -1,14 +1,19 @@
-import { App, Modal, TFile, Vault } from "obsidian";
+import { App, Modal, TFile, Vault, Notice } from "obsidian";
 import { PdfMetadata } from "./types";
 import { RenamePreview, executeRename } from "./renamer";
 import { DuplicateGroup, formatSize, formatDuplicateStats } from "./duplicates";
+import { writeMetadataToPdf } from "./writeback";
 
 export class PdfMetadataModal extends Modal {
 	metadata: PdfMetadata;
+	pdfFile: TFile | null;
+	vault: Vault;
 
-	constructor(app: App, metadata: PdfMetadata) {
+	constructor(app: App, metadata: PdfMetadata, pdfFile?: TFile) {
 		super(app);
 		this.metadata = metadata;
+		this.pdfFile = pdfFile || null;
+		this.vault = app.vault;
 	}
 
 	onOpen(): void {
@@ -212,6 +217,85 @@ export class DuplicatesModal extends Modal {
 				});
 			}
 		}
+	}
+
+	onClose(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
+export class WritebackModal extends Modal {
+	pdfFile: TFile;
+	metadata: Partial<PdfMetadata>;
+	vault: Vault;
+	onComplete: () => void;
+
+	constructor(
+		app: App,
+		pdfFile: TFile,
+		metadata: Partial<PdfMetadata>,
+		onComplete: () => void
+	) {
+		super(app);
+		this.pdfFile = pdfFile;
+		this.metadata = metadata;
+		this.vault = app.vault;
+		this.onComplete = onComplete;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("pdf-metadata-modal");
+
+		contentEl.createEl("h2", { text: "Write Metadata to PDF" });
+
+		contentEl.createEl("p", {
+			text: `This will write the following metadata to "${this.pdfFile.name}":`,
+		});
+
+		const list = contentEl.createEl("ul", { cls: "pdf-writeback-list" });
+
+		if (this.metadata.title) {
+			list.createEl("li", { text: `Title: ${this.metadata.title}` });
+		}
+		if (this.metadata.author) {
+			list.createEl("li", { text: `Author: ${this.metadata.author}` });
+		}
+		if (this.metadata.subject) {
+			list.createEl("li", { text: `Subject: ${this.metadata.subject}` });
+		}
+		if (this.metadata.keywords?.length) {
+			list.createEl("li", { text: `Keywords: ${this.metadata.keywords.join(", ")}` });
+		}
+
+		contentEl.createEl("p", {
+			text: "This action will modify the PDF file. Continue?",
+			cls: "pdf-writeback-warning",
+		});
+
+		const buttonContainer = contentEl.createDiv({ cls: "pdf-rename-buttons" });
+
+		const writeBtn = buttonContainer.createEl("button", {
+			text: "Write to PDF",
+			cls: "mod-cta",
+		});
+		writeBtn.addEventListener("click", () => this.executeWriteback());
+
+		const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.close());
+	}
+
+	private async executeWriteback(): Promise<void> {
+		try {
+			await writeMetadataToPdf(this.pdfFile, this.metadata, this.vault);
+			new Notice(`Metadata written to ${this.pdfFile.name}`);
+			this.onComplete();
+		} catch (error) {
+			new Notice(`Failed to write metadata: ${error}`);
+		}
+		this.close();
 	}
 
 	onClose(): void {

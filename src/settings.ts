@@ -1,11 +1,36 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
-import type PdfMetadataPlugin from "./main";
-import { OutputMode, AnnotationType, AnnotationGrouping, ThumbnailMode } from "./types";
+import { AbstractInputSuggest, App, Notice, PluginSettingTab, Setting, TFolder } from "obsidian";
+import type PdfIntakePlugin from "./main";
 
-export class PdfMetadataSettingTab extends PluginSettingTab {
-	plugin: PdfMetadataPlugin;
+class VaultFolderSuggest extends AbstractInputSuggest<TFolder> {
+	private onPicked: (folder: TFolder) => void;
 
-	constructor(app: App, plugin: PdfMetadataPlugin) {
+	constructor(app: App, input: HTMLInputElement, onPicked: (folder: TFolder) => void) {
+		super(app, input);
+		this.onPicked = onPicked;
+	}
+
+	protected getSuggestions(query: string): TFolder[] {
+		const folders = this.app.vault.getAllFolders();
+		const normalized = query.trim().toLocaleLowerCase();
+		return normalized
+			? folders.filter((folder) => folder.path.toLocaleLowerCase().includes(normalized))
+			: folders;
+	}
+
+	renderSuggestion(folder: TFolder, element: HTMLElement): void {
+		element.setText(folder.path);
+	}
+
+	selectSuggestion(folder: TFolder): void {
+		this.setValue(folder.path);
+		this.onPicked(folder);
+		this.close();
+	}
+}
+
+export class IntakeSettingTab extends PluginSettingTab {
+	plugin: PdfIntakePlugin;
+	constructor(app: App, plugin: PdfIntakePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -13,430 +38,103 @@ export class PdfMetadataSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		containerEl.createEl("h2", { text: "PDF Intake" });
+		const settings = this.plugin.settings;
 
-		containerEl.createEl("h2", { text: "PDF Metadata Settings" });
+		const intakeSetting = new Setting(containerEl)
+			.setName("Intake folder")
+			.setDesc(this.folderDescription(settings.intakeFolder, "PDFs eligible for intake"));
+		intakeSetting.addText((text) => {
+			text.setPlaceholder("Inbox")
+				.setValue(settings.intakeFolder)
+				.onChange(async (value) => {
+					settings.intakeFolder = value.trim().replace(/^\/+|\/+$/g, "");
+					intakeSetting.setDesc(
+						this.folderDescription(settings.intakeFolder, "PDFs eligible for intake"),
+					);
+					await this.plugin.saveSettings();
+				});
+			new VaultFolderSuggest(this.app, text.inputEl, (folder) => {
+				text.setValue(folder.path);
+				settings.intakeFolder = folder.path;
+				intakeSetting.setDesc(
+					this.folderDescription(settings.intakeFolder, "PDFs eligible for intake"),
+				);
+				void this.plugin
+					.saveSettings()
+					.catch(
+						(error: unknown) => new Notice(`Failed to save settings: ${String(error)}`),
+					);
+			});
+			return text;
+		});
 
-		// Scan folders
 		new Setting(containerEl)
-			.setName("Scan folders")
-			.setDesc("Folders to scan for PDFs (comma-separated). Leave empty to scan entire vault.")
-			.addText((text) =>
-				text
-					.setPlaceholder("papers, books, documents")
-					.setValue(this.plugin.settings.scanFolders.join(", "))
-					.onChange(async (value) => {
-						this.plugin.settings.scanFolders = value
-							.split(",")
-							.map((s) => s.trim())
-							.filter(Boolean);
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// Ignore patterns
-		new Setting(containerEl)
-			.setName("Ignore patterns")
-			.setDesc("Glob patterns to ignore (comma-separated).")
-			.addText((text) =>
-				text
-					.setPlaceholder("**/node_modules/**, **/.obsidian/**")
-					.setValue(this.plugin.settings.ignorePatterns.join(", "))
-					.onChange(async (value) => {
-						this.plugin.settings.ignorePatterns = value
-							.split(",")
-							.map((s) => s.trim())
-							.filter(Boolean);
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// Output mode
-		new Setting(containerEl)
-			.setName("Output mode")
-			.setDesc("How to store extracted metadata.")
+			.setName("Processed files")
+			.setDesc(
+				"Keep renamed PDFs in the intake folder or move them to another existing folder.",
+			)
 			.addDropdown((dropdown) =>
 				dropdown
-					.addOption("companion", "Companion notes")
-					.addOption("index", "Index note")
-					.addOption("sidecar", "Sidecar files")
-					.setValue(this.plugin.settings.outputMode)
+					.addOption("intake", "Keep in intake folder")
+					.addOption("another", "Move to another folder")
+					.setValue(settings.processedFolderMode)
 					.onChange(async (value) => {
-						this.plugin.settings.outputMode = value as OutputMode;
+						settings.processedFolderMode = value as typeof settings.processedFolderMode;
 						await this.plugin.saveSettings();
 						this.display();
-					})
+					}),
 			);
 
-		// Output folder (for companion mode)
-		if (this.plugin.settings.outputMode === "companion") {
-			new Setting(containerEl)
-				.setName("Output folder")
-				.setDesc("Folder for companion notes.")
-				.addText((text) =>
-					text
-						.setPlaceholder("PDF Notes")
-						.setValue(this.plugin.settings.outputFolder)
-						.onChange(async (value) => {
-							this.plugin.settings.outputFolder = value;
-							await this.plugin.saveSettings();
-						})
-				);
-		}
-
-		// Index path (for index mode)
-		if (this.plugin.settings.outputMode === "index") {
-			new Setting(containerEl)
-				.setName("Index file path")
-				.setDesc("Path for the index note.")
-				.addText((text) =>
-					text
-						.setPlaceholder("PDF Index.md")
-						.setValue(this.plugin.settings.indexPath)
-						.onChange(async (value) => {
-							this.plugin.settings.indexPath = value;
-							await this.plugin.saveSettings();
-						})
-				);
-		}
-
-		// Auto-scan on open
-		new Setting(containerEl)
-			.setName("Auto-scan on vault open")
-			.setDesc("Automatically scan for PDFs when opening the vault.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.autoScanOnOpen)
+		if (settings.processedFolderMode === "another") {
+			const processedSetting = new Setting(containerEl)
+				.setName("Processed folder")
+				.setDesc(this.folderDescription(settings.processedFolder, "processed PDFs"));
+			processedSetting.addText((text) => {
+				text.setPlaceholder("Sources/Processed")
+					.setValue(settings.processedFolder)
 					.onChange(async (value) => {
-						this.plugin.settings.autoScanOnOpen = value;
+						settings.processedFolder = value.trim().replace(/^\/+|\/+$/g, "");
+						processedSetting.setDesc(
+							this.folderDescription(settings.processedFolder, "processed PDFs"),
+						);
 						await this.plugin.saveSettings();
-					})
-			);
-
-		// Watch for new PDFs
-		new Setting(containerEl)
-			.setName("Watch for new PDFs")
-			.setDesc("Automatically process new PDFs added to the vault.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.watchForNewPdfs)
-					.onChange(async (value) => {
-						this.plugin.settings.watchForNewPdfs = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// Overwrite existing
-		new Setting(containerEl)
-			.setName("Overwrite existing notes")
-			.setDesc("Overwrite existing companion/sidecar notes when re-scanning.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.overwriteExisting)
-					.onChange(async (value) => {
-						this.plugin.settings.overwriteExisting = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// Companion template
-		new Setting(containerEl)
-			.setName("Companion note template")
-			.setDesc("Template for companion notes. Placeholders: {{title}}, {{embed}}, {{thumbnail}}, {{annotations}}")
-			.addTextArea((text) =>
-				text
-					.setPlaceholder("# {{title}}\n\n{{thumbnail}}\n\n{{embed}}\n\n## Notes\n\n")
-					.setValue(this.plugin.settings.companionTemplate)
-					.onChange(async (value) => {
-						this.plugin.settings.companionTemplate = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		containerEl.createEl("h3", { text: "Thumbnails" });
-
-		// Generate thumbnails
-		new Setting(containerEl)
-			.setName("Generate thumbnails")
-			.setDesc("Generate thumbnail images from PDF first page.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.generateThumbnails)
-					.onChange(async (value) => {
-						this.plugin.settings.generateThumbnails = value;
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
-
-		if (this.plugin.settings.generateThumbnails) {
-			// Thumbnail mode
-			new Setting(containerEl)
-				.setName("Thumbnail mode")
-				.setDesc("How to generate thumbnails.")
-				.addDropdown((dropdown) =>
-					dropdown
-						.addOption("single", "Single page")
-						.addOption("multiple", "Multiple pages")
-						.addOption("gallery", "Gallery (select via command)")
-						.setValue(this.plugin.settings.thumbnailMode)
-						.onChange(async (value) => {
-							this.plugin.settings.thumbnailMode = value as ThumbnailMode;
-							await this.plugin.saveSettings();
-							this.display();
-						})
-				);
-
-			// Page number (for single mode)
-			if (this.plugin.settings.thumbnailMode === "single") {
-				new Setting(containerEl)
-					.setName("Thumbnail page")
-					.setDesc("Page number to use (0 = last page).")
-					.addText((text) =>
-						text
-							.setPlaceholder("1")
-							.setValue(this.plugin.settings.thumbnailPage.toString())
-							.onChange(async (value) => {
-								const num = parseInt(value) || 1;
-								this.plugin.settings.thumbnailPage = num;
-								await this.plugin.saveSettings();
-							})
+					});
+				new VaultFolderSuggest(this.app, text.inputEl, (folder) => {
+					text.setValue(folder.path);
+					settings.processedFolder = folder.path;
+					processedSetting.setDesc(
+						this.folderDescription(settings.processedFolder, "processed PDFs"),
 					);
-			}
-
-			// Page count (for multiple mode)
-			if (this.plugin.settings.thumbnailMode === "multiple") {
-				new Setting(containerEl)
-					.setName("Pages to generate")
-					.setDesc("Number of pages to generate thumbnails for.")
-					.addText((text) =>
-						text
-							.setPlaceholder("3")
-							.setValue(this.plugin.settings.thumbnailPageCount.toString())
-							.onChange(async (value) => {
-								const num = parseInt(value) || 3;
-								this.plugin.settings.thumbnailPageCount = Math.max(1, Math.min(num, 20));
-								await this.plugin.saveSettings();
-							})
-					);
-			}
-
-			// Thumbnail folder
-			new Setting(containerEl)
-				.setName("Thumbnail folder")
-				.setDesc("Folder to store generated thumbnails.")
-				.addText((text) =>
-					text
-						.setPlaceholder("attachments/pdf-thumbnails")
-						.setValue(this.plugin.settings.thumbnailFolder)
-						.onChange(async (value) => {
-							this.plugin.settings.thumbnailFolder = value;
-							await this.plugin.saveSettings();
-						})
-				);
-
-			// Thumbnail scale
-			new Setting(containerEl)
-				.setName("Thumbnail scale")
-				.setDesc(`Scale factor for thumbnails (${Math.round(this.plugin.settings.thumbnailScale * 100)}%)`)
-				.addSlider((slider) =>
-					slider
-						.setLimits(0.1, 1.0, 0.1)
-						.setValue(this.plugin.settings.thumbnailScale)
-						.onChange(async (value) => {
-							this.plugin.settings.thumbnailScale = value;
-							await this.plugin.saveSettings();
-							this.display();
-						})
-				);
+					void this.plugin
+						.saveSettings()
+						.catch(
+							(error: unknown) =>
+								new Notice(`Failed to save settings: ${String(error)}`),
+						);
+				});
+				return text;
+			});
 		}
 
-		// Rename template
 		new Setting(containerEl)
-			.setName("Rename template")
-			.setDesc("Template for batch rename. Placeholders: {title}, {author}, {subject}, {year}, {keywords}, {pages}, {creator}")
+			.setName("Filename template")
+			.setDesc("Placeholders: {title}, {author}, {authors}, {year}, {journal}, {publisher}")
 			.addText((text) =>
 				text
-					.setPlaceholder("{author} - {title}")
-					.setValue(this.plugin.settings.renameTemplate)
+					.setPlaceholder("{author} - {title} ({year})")
+					.setValue(settings.renameTemplate)
 					.onChange(async (value) => {
-						this.plugin.settings.renameTemplate = value;
+						settings.renameTemplate = value;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
+	}
 
-		// Annotations Section
-		containerEl.createEl("h3", { text: "Annotations" });
-
-		// Extract annotations toggle
-		new Setting(containerEl)
-			.setName("Extract annotations")
-			.setDesc("Extract highlights, comments, and other annotations from PDFs.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.extractAnnotations)
-					.onChange(async (value) => {
-						this.plugin.settings.extractAnnotations = value;
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
-
-		if (this.plugin.settings.extractAnnotations) {
-			// Annotation types
-			const allTypes: { type: AnnotationType; label: string }[] = [
-				{ type: "Highlight", label: "Highlights" },
-				{ type: "Underline", label: "Underlines" },
-				{ type: "StrikeOut", label: "Strikethroughs" },
-				{ type: "Squiggly", label: "Squiggly underlines" },
-				{ type: "Text", label: "Comments (sticky notes)" },
-				{ type: "FreeText", label: "Free text" },
-				{ type: "Ink", label: "Ink drawings" },
-			];
-
-			new Setting(containerEl)
-				.setName("Annotation types")
-				.setDesc("Select which annotation types to extract.");
-
-			for (const { type, label } of allTypes) {
-				new Setting(containerEl)
-					.setName(label)
-					.addToggle((toggle) =>
-						toggle
-							.setValue(this.plugin.settings.annotationTypes.includes(type))
-							.onChange(async (value) => {
-								if (value) {
-									if (!this.plugin.settings.annotationTypes.includes(type)) {
-										this.plugin.settings.annotationTypes.push(type);
-									}
-								} else {
-									this.plugin.settings.annotationTypes =
-										this.plugin.settings.annotationTypes.filter((t) => t !== type);
-								}
-								await this.plugin.saveSettings();
-							})
-					)
-					.settingEl.addClass("pdf-metadata-indent");
-			}
-
-			// Annotation grouping
-			new Setting(containerEl)
-				.setName("Group annotations by")
-				.setDesc("How to organize annotations in companion notes.")
-				.addDropdown((dropdown) =>
-					dropdown
-						.addOption("type", "Annotation type")
-						.addOption("page", "Page number")
-						.addOption("date", "Creation date")
-						.addOption("flat", "No grouping (flat list)")
-						.setValue(this.plugin.settings.annotationGrouping)
-						.onChange(async (value) => {
-							this.plugin.settings.annotationGrouping = value as AnnotationGrouping;
-							await this.plugin.saveSettings();
-						})
-				);
-
-			// Extract highlight text
-			new Setting(containerEl)
-				.setName("Extract highlighted text")
-				.setDesc("Attempt to extract the text content from highlights.")
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.extractHighlightText)
-						.onChange(async (value) => {
-							this.plugin.settings.extractHighlightText = value;
-							await this.plugin.saveSettings();
-						})
-				);
-
-			// Include annotation colors
-			new Setting(containerEl)
-				.setName("Show annotation colors")
-				.setDesc("Include color indicators in the output.")
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.includeAnnotationColors)
-						.onChange(async (value) => {
-							this.plugin.settings.includeAnnotationColors = value;
-							await this.plugin.saveSettings();
-						})
-				);
+	private folderDescription(path: string, purpose: string): string {
+		if (!path || !this.app.vault.getAllFolders().some((folder) => folder.path === path)) {
+			return `Vault-relative folder for ${purpose}. Folder does not exist; processing is blocked until you choose an existing folder.`;
 		}
-
-		// Dataview Integration Section
-		containerEl.createEl("h3", { text: "Dataview Integration" });
-
-		new Setting(containerEl)
-			.setName("Add type field")
-			.setDesc("Add 'type: pdf' to frontmatter for easy Dataview filtering.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.frontmatterTypeField)
-					.onChange(async (value) => {
-						this.plugin.settings.frontmatterTypeField = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Include file size")
-			.setDesc("Add file size (human-readable and bytes) to frontmatter.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.frontmatterFileSize)
-					.onChange(async (value) => {
-						this.plugin.settings.frontmatterFileSize = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Include creator/producer")
-			.setDesc("Add PDF creator and producer software to frontmatter.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.frontmatterCreatorProducer)
-					.onChange(async (value) => {
-						this.plugin.settings.frontmatterCreatorProducer = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Keywords as tags")
-			.setDesc("Copy keywords to tags field for Obsidian's tag system.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.frontmatterKeywordsAsTags)
-					.onChange(async (value) => {
-						this.plugin.settings.frontmatterKeywordsAsTags = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// Example Dataview queries
-		const exampleContainer = containerEl.createDiv({ cls: "pdf-metadata-dataview-examples" });
-		exampleContainer.createEl("h4", { text: "Example Dataview Queries" });
-
-		const examples = [
-			{
-				title: "Table of all PDFs",
-				query: `TABLE title, author, pages, created\nFROM "PDF Notes"\nWHERE type = "pdf"\nSORT created DESC`,
-			},
-			{
-				title: "List PDFs by author",
-				query: `LIST\nFROM "PDF Notes"\nWHERE type = "pdf" AND author\nGROUP BY author`,
-			},
-			{
-				title: "Large PDFs (>100 pages)",
-				query: `TABLE title, pages, fileSize\nFROM "PDF Notes"\nWHERE type = "pdf" AND pages > 100`,
-			},
-		];
-
-		for (const example of examples) {
-			const exampleEl = exampleContainer.createDiv({ cls: "pdf-metadata-example" });
-			exampleEl.createEl("strong", { text: example.title });
-			const codeEl = exampleEl.createEl("pre");
-			codeEl.createEl("code", { text: example.query });
-		}
+		return `Existing vault folder for ${purpose}. Type to search existing folders.`;
 	}
 }

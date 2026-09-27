@@ -1,497 +1,126 @@
-.pdf-metadata-modal {
-	padding: 1rem;
+.pdf-intake-view {
+	height: 100%;
+	overflow: auto;
+	padding: var(--size-4-4);
 }
 
-.pdf-metadata-modal h2 {
+.pdf-intake-header {
+	margin-bottom: var(--size-4-4);
+}
+
+.pdf-intake-header h2 {
 	margin-top: 0;
-	margin-bottom: 1rem;
 }
 
-.pdf-metadata-table {
-	width: 100%;
-	border-collapse: collapse;
+.pdf-intake-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
 }
 
-.pdf-metadata-table tr {
-	border-bottom: 1px solid var(--background-modifier-border);
+.pdf-intake-list {
+	display: grid;
+	gap: var(--size-4-3);
 }
 
-.pdf-metadata-table td {
-	padding: 0.5rem 0;
+.pdf-intake-card {
+	min-width: 0;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
 }
 
-.pdf-metadata-label {
-	font-weight: 600;
-	width: 30%;
-	color: var(--text-muted);
+.pdf-intake-card-top,
+.pdf-intake-selection {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
 }
 
-.pdf-metadata-value {
-	width: 70%;
+.pdf-intake-card-top {
+	justify-content: space-between;
 }
 
-/* Rename Preview Modal */
-.pdf-rename-summary {
-	color: var(--text-muted);
-	margin-bottom: 1rem;
+.pdf-intake-selection {
+	min-width: 0;
 }
 
-.pdf-rename-table {
-	width: 100%;
-	border-collapse: collapse;
-	margin-bottom: 1rem;
+.pdf-intake-file-name,
+.pdf-intake-detail-value {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
-.pdf-rename-table th {
-	text-align: left;
-	padding: 0.5rem;
-	border-bottom: 2px solid var(--background-modifier-border);
-	color: var(--text-muted);
+.pdf-intake-file-name {
+	font-weight: var(--font-semibold);
 }
 
-.pdf-rename-table td {
-	padding: 0.5rem;
-	border-bottom: 1px solid var(--background-modifier-border);
+.pdf-intake-status {
+	flex: 0 0 auto;
+	padding: 0.15em 0.55em;
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	font-size: var(--font-smaller);
 }
 
-.pdf-rename-old {
-	color: var(--text-muted);
-}
-
-.pdf-rename-new {
-	font-weight: 500;
-}
-
-.pdf-rename-ok {
+.is-ready .pdf-intake-status,
+.is-processed .pdf-intake-status {
 	color: var(--text-success);
 }
 
-.pdf-rename-skip {
+.is-conflict .pdf-intake-status,
+.is-error .pdf-intake-status,
+.is-unresolved .pdf-intake-status {
+	color: var(--text-error);
+}
+
+.pdf-intake-paths,
+.pdf-intake-metadata {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+	gap: var(--size-4-2) var(--size-4-4);
+	margin-top: var(--size-4-3);
+}
+
+.pdf-intake-detail {
+	min-width: 0;
+	display: grid;
+	gap: var(--size-2-1);
+}
+
+.pdf-intake-detail-label {
 	color: var(--text-muted);
+	font-size: var(--font-smaller);
 }
 
-.pdf-rename-conflict {
-	color: var(--text-warning);
-}
-
-.pdf-rename-buttons {
-	display: flex;
-	gap: 0.5rem;
-	justify-content: flex-end;
-	margin-top: 1rem;
-}
-
-/* Duplicates Modal */
-.pdf-duplicates-modal {
-	max-width: 600px;
-}
-
-.pdf-duplicates-summary {
-	color: var(--text-muted);
-	margin-bottom: 1rem;
-}
-
-.pdf-duplicate-group {
-	margin-bottom: 1.5rem;
-	padding: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
-}
-
-.pdf-duplicate-group h3 {
-	margin-top: 0;
-	margin-bottom: 0.5rem;
-	font-size: 0.9rem;
-	color: var(--text-muted);
-}
-
-.pdf-duplicate-list {
-	list-style: none;
-	padding: 0;
-	margin: 0;
-}
-
-.pdf-duplicate-list li {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	padding: 0.5rem 0;
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.pdf-duplicate-list li:last-child {
-	border-bottom: none;
-}
-
-.pdf-duplicate-path {
-	flex: 1;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	margin-right: 1rem;
-}
-
-.pdf-duplicate-actions {
-	display: flex;
-	gap: 0.25rem;
-}
-
-.pdf-duplicate-actions button {
-	padding: 0.25rem 0.5rem;
-	font-size: 0.8rem;
-}
-
-/* Settings indent for nested options */
-.pdf-metadata-indent {
-	padding-left: 2rem;
-}
-
-/* Dataview examples in settings */
-.pdf-metadata-dataview-examples {
-	margin-top: 1.5rem;
-	padding: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
-}
-
-.pdf-metadata-dataview-examples h4 {
-	margin-top: 0;
-	margin-bottom: 1rem;
-	color: var(--text-muted);
-}
-
-.pdf-metadata-example {
-	margin-bottom: 1rem;
-}
-
-.pdf-metadata-example:last-child {
-	margin-bottom: 0;
-}
-
-.pdf-metadata-example strong {
-	display: block;
-	margin-bottom: 0.5rem;
-	font-size: 0.9rem;
-}
-
-.pdf-metadata-example pre {
-	margin: 0;
-	padding: 0.75rem;
-	background: var(--background-primary);
-	border-radius: 4px;
-	overflow-x: auto;
-}
-
-.pdf-metadata-example code {
-	font-size: 0.85rem;
+.pdf-intake-detail-value {
 	white-space: pre-wrap;
 }
 
-/* Citation Modal */
-.pdf-citation-modal {
-	min-width: 500px;
-}
-
-.pdf-citation-row {
+.pdf-intake-manual {
 	display: flex;
-	align-items: center;
-	gap: 1rem;
-	margin-bottom: 1rem;
+	gap: var(--size-4-2);
+	margin-top: var(--size-4-3);
 }
 
-.pdf-citation-row label {
-	min-width: 100px;
-	font-weight: 500;
-}
-
-.pdf-citation-select,
-.pdf-citation-input {
+.pdf-intake-manual input {
 	flex: 1;
-	padding: 0.5rem;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
+	min-width: 0;
 }
 
-.pdf-citation-preview {
-	margin-top: 1.5rem;
-	padding: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
+.pdf-intake-error {
+	color: var(--text-error);
 }
 
-.pdf-citation-preview h4 {
-	margin-top: 0;
-	margin-bottom: 0.75rem;
-	color: var(--text-muted);
-}
+@media (max-width: 600px) {
+	.pdf-intake-view {
+		padding: var(--size-4-2);
+	}
 
-.pdf-citation-code {
-	margin: 0;
-	padding: 1rem;
-	background: var(--background-primary);
-	border-radius: 4px;
-	overflow-x: auto;
-	max-height: 300px;
-}
-
-.pdf-citation-code code {
-	font-family: var(--font-monospace);
-	font-size: 0.85rem;
-	white-space: pre-wrap;
-	word-break: break-all;
-}
-
-/* Duplicates Bulk Actions */
-.pdf-duplicates-bulk-bar {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 1rem;
-	align-items: center;
-	justify-content: space-between;
-	padding: 1rem;
-	margin-bottom: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
-}
-
-.pdf-duplicates-strategy {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-
-.pdf-duplicates-strategy label {
-	font-weight: 500;
-}
-
-.pdf-duplicates-strategy select {
-	padding: 0.4rem 0.75rem;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
-}
-
-.pdf-duplicates-bulk-buttons {
-	display: flex;
-	gap: 0.5rem;
-}
-
-.pdf-duplicates-groups {
-	max-height: 400px;
-	overflow-y: auto;
-}
-
-.pdf-duplicate-group-header {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-}
-
-.pdf-duplicate-group-header h3 {
-	margin: 0;
-}
-
-.pdf-duplicate-group-actions {
-	display: flex;
-	gap: 0.25rem;
-}
-
-.pdf-duplicate-keep {
-	background: var(--background-secondary-alt);
-	border-radius: 4px;
-}
-
-.pdf-duplicate-keep-badge {
-	color: var(--text-success);
-	font-size: 0.85rem;
-	font-weight: 500;
-}
-
-.pdf-duplicates-warning {
-	color: var(--text-warning);
-	font-style: italic;
-}
-
-.pdf-duplicates-folder-row {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-	margin: 1rem 0;
-}
-
-.pdf-duplicates-folder-row label {
-	font-weight: 500;
-}
-
-.pdf-duplicates-folder-row input {
-	flex: 1;
-	padding: 0.5rem;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
-}
-
-/* Smart Rename Modal */
-.pdf-smart-rename-modal {
-	min-width: 500px;
-}
-
-.pdf-smart-rename-loading {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	padding: 2rem;
-	color: var(--text-muted);
-}
-
-.pdf-smart-rename-loading .spinner {
-	width: 24px;
-	height: 24px;
-	border: 3px solid var(--background-modifier-border);
-	border-top-color: var(--interactive-accent);
-	border-radius: 50%;
-	animation: pdf-spinner 1s linear infinite;
-	margin-bottom: 1rem;
-}
-
-@keyframes pdf-spinner {
-	to { transform: rotate(360deg); }
-}
-
-.pdf-smart-rename-result {
-	margin-bottom: 1.5rem;
-}
-
-.pdf-smart-rename-source {
-	display: inline-block;
-	padding: 0.25rem 0.5rem;
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
-	border-radius: 4px;
-	font-size: 0.8rem;
-	font-weight: 500;
-	margin-bottom: 1rem;
-}
-
-.pdf-smart-rename-identifier {
-	display: block;
-	color: var(--text-muted);
-	font-family: var(--font-monospace);
-	font-size: 0.85rem;
-	margin-bottom: 1rem;
-}
-
-.pdf-smart-rename-info {
-	margin-bottom: 1rem;
-}
-
-.pdf-smart-rename-info p {
-	margin: 0.25rem 0;
-}
-
-.pdf-smart-rename-info strong {
-	color: var(--text-muted);
-	display: inline-block;
-	min-width: 80px;
-}
-
-.pdf-smart-rename-no-result {
-	color: var(--text-muted);
-	font-style: italic;
-	margin-bottom: 1rem;
-}
-
-.pdf-smart-rename-manual {
-	margin-bottom: 1.5rem;
-	padding: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
-}
-
-.pdf-smart-rename-manual h4 {
-	margin-top: 0;
-	margin-bottom: 0.75rem;
-	font-size: 0.9rem;
-}
-
-.pdf-smart-rename-manual-row {
-	display: flex;
-	gap: 0.5rem;
-}
-
-.pdf-smart-rename-manual input {
-	flex: 1;
-	padding: 0.5rem;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
-	font-family: var(--font-monospace);
-}
-
-.pdf-smart-rename-template {
-	margin-bottom: 1.5rem;
-}
-
-.pdf-smart-rename-template label {
-	display: block;
-	margin-bottom: 0.5rem;
-	font-weight: 500;
-}
-
-.pdf-smart-rename-template input {
-	width: 100%;
-	padding: 0.5rem;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
-	font-family: var(--font-monospace);
-}
-
-.pdf-smart-rename-template small {
-	display: block;
-	margin-top: 0.25rem;
-	color: var(--text-muted);
-	font-size: 0.8rem;
-}
-
-.pdf-smart-rename-preview {
-	padding: 1rem;
-	background: var(--background-secondary);
-	border-radius: 8px;
-	margin-bottom: 1.5rem;
-}
-
-.pdf-smart-rename-preview h4 {
-	margin-top: 0;
-	margin-bottom: 0.75rem;
-	color: var(--text-muted);
-	font-size: 0.9rem;
-}
-
-.pdf-smart-rename-preview-old {
-	color: var(--text-muted);
-	text-decoration: line-through;
-	margin-bottom: 0.5rem;
-	word-break: break-all;
-}
-
-.pdf-smart-rename-preview-new {
-	font-weight: 500;
-	color: var(--text-success);
-	word-break: break-all;
-}
-
-.pdf-smart-rename-buttons {
-	display: flex;
-	gap: 0.5rem;
-	justify-content: flex-end;
-}
-
-.pdf-smart-rename-buttons button.mod-cta {
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
+	.pdf-intake-card-top,
+	.pdf-intake-manual {
+		align-items: stretch;
+		flex-direction: column;
+	}
 }

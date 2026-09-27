@@ -8,13 +8,7 @@ export interface LookupResult {
 	publisher?: string;
 	doi?: string;
 	isbn?: string;
-	volume?: string;
-	issue?: string;
-	pages?: string;
-	abstract?: string;
 }
-
-export type LookupSource = "crossref" | "openlibrary";
 
 /**
  * Look up metadata by DOI using CrossRef API
@@ -29,7 +23,7 @@ export async function lookupDoi(doi: string): Promise<LookupResult | null> {
 		const response = await requestUrl({
 			url,
 			headers: {
-				"User-Agent": "ObsidianPdfMetadata/1.0 (https://obsidian.md)",
+				"User-Agent": "PDFIntake/1.0 (https://obsidian.md)",
 			},
 		});
 
@@ -38,7 +32,7 @@ export async function lookupDoi(doi: string): Promise<LookupResult | null> {
 			return null;
 		}
 
-		const data = response.json;
+		const data = response.json as Record<string, unknown>;
 		return parseCrossRefResponse(data, cleanDoi);
 	} catch (error) {
 		console.error("CrossRef lookup failed:", error);
@@ -59,7 +53,7 @@ export async function lookupIsbn(isbn: string): Promise<LookupResult | null> {
 		const response = await requestUrl({
 			url,
 			headers: {
-				"User-Agent": "ObsidianPdfMetadata/1.0 (https://obsidian.md)",
+				"User-Agent": "PDFIntake/1.0 (https://obsidian.md)",
 			},
 		});
 
@@ -68,7 +62,7 @@ export async function lookupIsbn(isbn: string): Promise<LookupResult | null> {
 			return null;
 		}
 
-		const data = response.json;
+		const data = response.json as Record<string, unknown>;
 		return parseOpenLibraryResponse(data, cleanIsbn);
 	} catch (error) {
 		console.error("OpenLibrary lookup failed:", error);
@@ -131,13 +125,11 @@ export function extractIsbn(text: string): string | null {
  */
 function cleanDOI(doi: string): string | null {
 	// Remove common prefixes and clean up
-	let clean = doi
+	const clean = doi
 		.replace(/^doi[:\s]*/i, "")
 		.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
-		.trim();
-
-	// Remove trailing punctuation that might have been captured
-	clean = clean.replace(/[.,;)\]]+$/, "");
+		.trim()
+		.replace(/[.,;)\]]+$/, "");
 
 	// Validate DOI format
 	if (/^10\.\d{4,}\/\S+$/.test(clean)) {
@@ -152,7 +144,7 @@ function cleanDOI(doi: string): string | null {
  */
 function cleanISBN(isbn: string): string | null {
 	// Remove "ISBN" prefix and non-digit characters (except X for ISBN-10)
-	let clean = isbn
+	const clean = isbn
 		.replace(/^ISBN[-:\s]*(1[03][-:\s]*)?/i, "")
 		.replace(/[-\s]/g, "")
 		.toUpperCase();
@@ -183,10 +175,12 @@ function parseCrossRefResponse(data: Record<string, unknown>, doi: string): Look
 	// Authors
 	const authors = message.author as Array<{ given?: string; family?: string }>;
 	if (authors?.length) {
-		result.authors = authors.map((a) => {
-			if (a.given && a.family) return `${a.given} ${a.family}`;
-			return a.family || a.given || "";
-		}).filter(Boolean);
+		result.authors = authors
+			.map((a) => {
+				if (a.given && a.family) return `${a.given} ${a.family}`;
+				return a.family || a.given || "";
+			})
+			.filter(Boolean);
 	}
 
 	// Year
@@ -206,16 +200,6 @@ function parseCrossRefResponse(data: Record<string, unknown>, doi: string): Look
 		result.publisher = message.publisher as string;
 	}
 
-	// Volume, Issue, Pages
-	if (message.volume) result.volume = message.volume as string;
-	if (message.issue) result.issue = message.issue as string;
-	if (message.page) result.pages = message.page as string;
-
-	// Abstract
-	if (message.abstract) {
-		result.abstract = (message.abstract as string).replace(/<[^>]*>/g, "");
-	}
-
 	return result;
 }
 
@@ -224,7 +208,7 @@ function parseCrossRefResponse(data: Record<string, unknown>, doi: string): Look
  */
 async function parseOpenLibraryResponse(
 	data: Record<string, unknown>,
-	isbn: string
+	isbn: string,
 ): Promise<LookupResult> {
 	const result: LookupResult = { isbn };
 
@@ -243,13 +227,13 @@ async function parseOpenLibraryResponse(
 				const authorResponse = await requestUrl({
 					url: authorUrl,
 					headers: {
-						"User-Agent": "ObsidianPdfMetadata/1.0 (https://obsidian.md)",
+						"User-Agent": "PDFIntake/1.0 (https://obsidian.md)",
 					},
 				});
 				if (authorResponse.status === 200) {
-					const authorData = authorResponse.json;
-					if (authorData.name) {
-						result.authors.push(authorData.name as string);
+					const authorData = authorResponse.json as { name?: unknown };
+					if (typeof authorData.name === "string") {
+						result.authors.push(authorData.name);
 					}
 				}
 			} catch {
@@ -274,69 +258,4 @@ async function parseOpenLibraryResponse(
 	}
 
 	return result;
-}
-
-/**
- * Generate filename from lookup result
- */
-export function generateFilenameFromLookup(
-	result: LookupResult,
-	template: string
-): string {
-	let filename = template;
-
-	// Replace placeholders
-	filename = filename.replace(/\{title\}/g, result.title || "Untitled");
-	filename = filename.replace(/\{author\}/g, result.authors?.[0] || "Unknown");
-	filename = filename.replace(
-		/\{authors\}/g,
-		result.authors?.join(", ") || "Unknown"
-	);
-	filename = filename.replace(/\{year\}/g, result.year?.toString() || "");
-	filename = filename.replace(/\{journal\}/g, result.journal || "");
-	filename = filename.replace(/\{publisher\}/g, result.publisher || "");
-
-	// Clean filename
-	filename = filename
-		.replace(/[<>:"/\\|?*]/g, "") // Remove invalid characters
-		.replace(/\s+/g, " ") // Normalize whitespace
-		.replace(/^\s+|\s+$/g, "") // Trim
-		.replace(/\s*-\s*-\s*/g, " - ") // Clean up double dashes
-		.replace(/\s+\.pdf$/i, ".pdf"); // Clean up before extension
-
-	// Ensure .pdf extension
-	if (!filename.toLowerCase().endsWith(".pdf")) {
-		filename += ".pdf";
-	}
-
-	return filename;
-}
-
-/**
- * Auto-detect identifier type and look up
- */
-export async function autoLookup(text: string): Promise<{
-	result: LookupResult | null;
-	source: LookupSource | null;
-	identifier: string | null;
-}> {
-	// Try DOI first
-	const doi = extractDoi(text);
-	if (doi) {
-		const result = await lookupDoi(doi);
-		if (result) {
-			return { result, source: "crossref", identifier: doi };
-		}
-	}
-
-	// Try ISBN
-	const isbn = extractIsbn(text);
-	if (isbn) {
-		const result = await lookupIsbn(isbn);
-		if (result) {
-			return { result, source: "openlibrary", identifier: isbn };
-		}
-	}
-
-	return { result: null, source: null, identifier: null };
 }

@@ -1,11 +1,20 @@
 {
-	"name": "obsidian-pdf-metadata",
+	"name": "obsidian-pdf-intake",
 	"version": "1.0.0",
-	"description": "Extract and manage PDF metadata in Obsidian",
+	"description": "Resolve bibliographic metadata and safely rename PDFs in Obsidian",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "node esbuild.config.mjs production"
+		"build": "node esbuild.config.mjs production",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"lint": "eslint .",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit",
+		"check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
+		"deploy": "npm run build && node scripts/deploy.mjs dev",
+		"deploy:actual": "npm run build && node scripts/deploy.mjs actual"
 	},
 	"keywords": [
 		"obsidian",
@@ -16,14 +25,18 @@
 	"author": "Luca Gabriel Oelfke",
 	"license": "MIT",
 	"dependencies": {
-		"pdf-lib": "^1.17.1",
 		"pdfjs-dist": "^4.0.379"
 	},
 	"devDependencies": {
-		"@types/node": "^16.11.6",
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^22.20.4",
 		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.25.0",
+		"eslint": "^10.11.0",
 		"obsidian": "latest",
-		"typescript": "^5.0.0"
+		"prettier": "^3.9.9",
+		"typescript": "^5.0.0",
+		"typescript-eslint": "^8.70.1",
+		"vitest": "^3.2.7"
 	}
 }

@@ -1,9 +1,9 @@
 {
-	"id": "pdf-metadata",
-	"name": "PDF Metadata",
+	"id": "pdf-intake",
+	"name": "PDF Intake",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Extract and manage PDF metadata in Obsidian",
+	"minAppVersion": "1.7.2",
+	"description": "Resolve bibliographic metadata and safely rename PDFs in Obsidian",
 	"author": "Luca Gabriel Oelfke",
 	"authorUrl": "https://github.com/Querulantenkind",
 	"isDesktopOnly": false

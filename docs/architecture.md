@@ -1,7 +1,7 @@
 # PDF Intake architecture
 
-Status: implemented baseline plus approved redesign decisions (redesign not implemented)  
-Last updated: 2026-10-07
+Status: Slice 1 foundations implemented; the redesigned intake workflow remains incomplete
+Last updated: 2026-10-08
 
 PDF Intake is a small Obsidian plugin for normalizing the bibliographic envelope of existing PDFs.
 
@@ -9,13 +9,13 @@ The target input is a PDF whose document content is already useful/correct but w
 
 The target output is the same document content with a clean, trustworthy bibliographic envelope.
 
-The sections describing the current system record the existing checkout. The [redesign contract and architectural seams](#redesign-contract-and-architectural-seams) below define the target, superseding the folder-driven interaction when implementation begins. The [overall implementation plan](implementation-plan.md) defines delivery slices; it does not authorize their implementation.
+The current implementation provides the session/configuration foundation and an honest empty setup shell. PDF admission, identification, the working surface and enabled Apply interaction are later slices. The [redesign contract and architectural seams](#redesign-contract-and-architectural-seams) record the approved target, and the [overall implementation plan](../.codex/architecture/implementation-plan.md) defines its delivery boundaries.
 
 ## Product boundary
 
-PDF Intake is responsible for:
+The complete product is intended to:
 
-- identifying bibliographic works from existing PDFs;
+- identifying bibliographic works from explicitly selected existing PDFs;
 - resolving bibliographic metadata from DOI/ISBN;
 - previewing intended changes before mutation;
 - normalizing filenames and final vault locations;
@@ -33,76 +33,62 @@ It does not aim to provide:
 - reference-library management;
 - background watched-folder automation.
 
-## Current system shape
+## Current Slice 1 system shape
 
 ```text
-Configured intake folder
+Open or focus PDF Intake
         ↓
-recursive PDF scan
+fresh plugin-owned empty session
         ↓
-PDF.js text extraction from first pages
+PDFs / Output / Metadata & naming setup
         ↓
-identifier extraction / manual DOI or ISBN
+disabled Add PDFs and Begin review at zero membership
         ↓
-shared bibliographic resolver
-   ├─ Crossref
-   └─ Open Library
+pure rename planner + frozen Apply invocation seams
         ↓
-resolved bibliographic record
-        ↓
-filename + final-path planning
-        ↓
-durable PDF Intake workspace preview
-        ↓
-explicit Process action
-        ↓
-final conflict recheck
-        ↓
-single Obsidian Vault.rename()
+rename-only ApplyChangesService (no enabled UI path yet)
 ```
 
-PDF bytes are currently read-only.
+The setup shell does not scan folders, admit files or resolve metadata. PDF bytes are read-only, and no mutation is available from the shell.
 
 ## Main components
 
-### Workspace view
+### Workspace view and setup shell
 
 PDF Intake is exposed as a custom Obsidian `ItemView` with view type:
 
 `pdf-intake-view`
 
-The view is the main working surface. Its Obsidian display name is `PDF Intake`.
+The view is the durable setup surface. Its Obsidian display name is `PDF Intake`.
 
 The registered command is `Open PDF Intake` (command ID `open-pdf-intake`).
 
-Running the command:
+Running the command or ribbon action:
 
 1. find an existing PDF Intake leaf if one exists;
 2. reveal/focus it;
 3. load it if Obsidian has deferred the custom view;
-4. refresh its view of the configured intake folder;
-5. create a new leaf only if no PDF Intake view exists.
+4. create a new leaf only if no PDF Intake view exists.
+
+The plugin owns one session coordinator for its lifetime. A newly opened session copies effective defaults into detached session values and starts with a fresh identity, zero PDFs, setup open and PDFs selected. Closing and reopening the ItemView does not reset the session. Plugin reload creates a new empty runtime session; the opaque draft namespace is retained but not restored in Slice 1.
+
+The setup rail always contains PDFs, Output and Metadata & naming. Add PDFs and Begin review are disabled at zero membership; no production or test UI seeds PDFs. Output supports current source folders and a selected existing vault folder, including an explicit vault-root choice. Metadata & naming shows a concrete example and accepts a simple custom template while preserving component-format defaults and exact valid migrated templates.
 
 The workflow deliberately avoids a blocking batch modal because intake work may require switching to PDFs, browser research or other Obsidian tabs and then returning.
 
-### Intake scanning
+### Session and persistence ownership
 
-The plugin scans the configured intake folder recursively for PDFs.
+Session membership is the future source of work. Slice 1 has no membership ingress and no folder-scanning authority.
 
-Safety rules:
+Plugin data is schema-versioned and separates settings/defaults, workspace edit policy and an opaque unfinished-session draft namespace. One `PluginDataStore` serializes partial updates against the latest successfully saved envelope. Settings patches preserve the draft; draft patches preserve settings. Failed writes do not publish speculative committed values. Local queue ordering is not a crash-atomic or multi-device guarantee.
 
-- an invalid/missing intake folder returns no files;
-- there is no fallback to scanning the whole vault;
-- when processed-folder mode is `another` and the configured processed folder exists as a proper descendant of intake, that processed subtree is excluded;
-- an invalid processed folder is not excluded from scanning, but it blocks processing;
-- a processed folder outside intake does not affect scanning;
-- processed folder equal to intake does not exclude the entire tree.
+Known flat legacy settings migrate selectively. `intakeFolder` and `intakeFolders` never become session membership. Valid supported filename templates and unambiguous existing destinations are preserved. An empty or invalid legacy `another` destination becomes current source folders; it is not interpreted as vault root. Corrupt or unknown data stays read-only and is not automatically rewritten. New-model destinations that later disappear remain visible as invalid intent.
 
-The filesystem is authoritative. Persistent per-session checkbox/input restoration is not currently part of the architecture.
+Workspace edits copy into defaults only under the committed `future-sessions` policy. `session-only` edits stay in the current session. Later default changes never rewrite an existing session.
 
 ### PDF text extraction
 
-PDF.js 4.10.38 is currently used to extract text from the first three pages for identifier discovery.
+The shared resolver's PDF.js 4.10.38 read boundary remains available for later identification, but the Slice 1 shell does not invoke extraction.
 
 The build copies the matching `pdf.worker.mjs` into the plugin directory. On first extraction, PDF Intake reads that asset through the vault adapter, creates a Blob-backed module Worker, and assigns that Worker to the bundled PDF.js instance through `GlobalWorkerOptions.workerPort`. Plugin enable/load does not construct a Worker. The Worker is terminated and its Blob URL revoked when the plugin unloads.
 
@@ -119,7 +105,7 @@ PDF.js is a read/parser dependency here, not the future metadata-write library.
 
 ### Bibliographic resolver
 
-Automatic and manual resolution share the same resolver path.
+Automatic and manual resolution use the same resolver path when later identification/repair slices connect them. Slice 1 does not start provider work.
 
 Current supported provider behavior:
 
@@ -132,7 +118,7 @@ A manual DOI/ISBN can be supplied for unresolved/error entries and retried witho
 
 Known limitation: some real PDFs visibly contain a DOI that current extraction/detection does not find. This is a resolver/extraction quality issue, not expected behavior.
 
-### Resolved bibliographic record
+### Provider DTO and canonical bibliographic record
 
 The resolver returns a typed bibliographic result that can include:
 
@@ -147,7 +133,7 @@ The resolver returns a typed bibliographic result that can include:
 - provider/source;
 - resolution status/error.
 
-This resolved record is the source for downstream normalization.
+The current resolver DTO remains provider-shaped and lossy. The new canonical domain type separately preserves ordered structured authors, literal organizations/mononyms, unresolved positions and completeness. Provider ingestion is not upgraded in Slice 1, so automatic identification must not be connected to this canonical type until provider mapping preserves the supplied sequence and uncertainty.
 
 Long-term, both filename projection and embedded-PDF metadata projection should derive from this same resolved bibliographic truth rather than from independent lookup paths.
 
@@ -166,75 +152,52 @@ Current supported placeholders include:
 
 Planning sanitizes unsafe filename characters and produces a final vault-relative path before mutation.
 
-The current formatter projects first full author / all full authors from strings. The approved [canonical/derived authorship contract](#canonical-authorship-and-derived-output-representations) replaces this as the target domain abstraction while preserving valid legacy user templates.
+Pure formatting derives output-specific names without mutating canonical authorship. The factory format is `<first-author family name>[ et al.] (<year>). <title>`. Literal/organization/mononym values are retained conservatively; no surname is guessed. Valid legacy templates keep their exact text and compile `{author}` / `{authors}` into full-name compatibility formats. The setup shell's example does not describe a real PDF.
 
 ### Folder configuration
 
-Settings currently define:
+Settings and session configuration define:
 
-- intake folder;
-- processed-file destination mode:
-    - keep beside each source PDF in its current folder within the intake tree;
-    - move to another configured existing vault folder;
-- rename template.
+- output location:
+    - current source folder for each PDF;
+    - one explicitly selected existing vault folder, including the root;
+- metadata/naming format, including the factory component convention or an exact legacy/custom template;
+- a workspace-edit policy controlling whether setup edits also become future defaults.
 
-Folder fields accept vault-relative paths and offer suggestions from existing vault folders. Arbitrary typed paths can remain invalid; validation blocks scanning for an invalid intake folder and blocks processing for an invalid processed folder.
+No intake folder is configured. Chosen output folders must exist when selected; a saved new-model folder that later disappears remains visible and blocks planning. No folder is created automatically.
 
 Configured folders must already exist. The plugin must not silently create a hierarchy because of a typo.
 
-Known UX issue: the processed-folder setting can visually resemble a preselected/default path while simultaneously being invalid. The setting UI needs to make unset/invalid state unambiguous.
+The Defaults section presents workspace-edit policy first, followed by default Output and Metadata & naming. It contains no PDF set.
 
 ### Planning and conflicts
 
-For every resolved entry, planning computes the intended final path before mutation.
-
-The view shows the current path and intended final path.
+`planRenames()` is pure and accepts explicit items, configuration and a read-only vault snapshot. It returns detached per-item eligible/no-change/blocked results. No current setup action calls it because Slice 1 admits no PDFs.
 
 Conflict handling:
 
-- existing vault destination conflicts are detected during planning;
-- collisions among multiple planned outputs are also detected;
+- existing files and folders at a destination block planning;
+- all candidates for a shared destination are blocked, independent of input order;
+- case-conflict keys use NFC normalization and locale-independent lowercase; only the exact source path is exempted for a case-only rename, while distinct case-confusable paths block;
 - destination existence is rechecked immediately before mutation;
-- conflicting entries are not processed.
+- a no-op is not an Apply operation.
+
+The session coordinator builds planning input from its current session configuration, item evidence and source observations. Callers provide only read-only vault file/folder path observations; they cannot register eligible planning results. The coordinator stores detached planning values and their basis, and rechecks that basis and the planner result before creating an Apply invocation. A changed session, configuration, evidence or source observation invalidates the reviewed plan.
 
 ### Processing
 
-Current processing mutates only the vault path.
+`ApplyChangesService` receives an explicit frozen invocation containing fixed source paths, observed size/mtime and reviewed destinations. It validates the complete invocation before writing and rejects a destination that conflicts with another operation's original source, so rename chains cannot depend on input order or intermediate path vacating. It copies only bindings for listed item IDs, validates current source identity/stat and destination state, and performs one `Vault.rename()` per eligible operation. It cannot enumerate session work, consult mutable session configuration, replan or add unsupported metadata/sidecar/cover actions. Only a resolved rename yields a path-only `renamed` outcome. This seam has no enabled UI path in Slice 1. Freshness checks are best-effort and do not promise atomic exclusion, rollback, journaling or crash recovery.
 
-When processed-folder mode is set to keep files in intake, each PDF stays in its current parent folder (which may be a nested folder under the intake root):
+### Current session state
 
-```text
-Inbox/original.pdf
-→ Inbox/Normalized Name.pdf
-```
+The current session model represents:
 
-When processing to a separate folder:
+- phase (`setup` or future `working`);
+- setup visibility and selected concern;
+- detached configuration and an ordered, currently empty item list;
+- per-item identification, planning and apply-outcome discriminants for later slices.
 
-```text
-Inbox/original.pdf
-→ Sources/Processed/Normalized Name.pdf
-```
-
-Both rename and move are represented as one final `Vault.rename(file, finalPath)` call rather than two separate mutations.
-
-An entry is marked `processed` only after `Vault.rename()` succeeds.
-
-Unexpected failures become explicit error state.
-
-### Current intake states
-
-The current model includes states equivalent to:
-
-- unprocessed;
-- resolving;
-- ready;
-- unresolved;
-- conflict;
-- error;
-- processed;
-- unchanged / already at destination.
-
-The exact meaning of `unchanged` will need revision when embedded metadata normalization ships: a correctly named file can still have incorrect internal PDF metadata and therefore still require processing.
+No scanner status or success claim that PDF metadata was written exists. Path-only no-change is excluded from Apply.
 
 ## Current implementation interaction contracts
 
@@ -246,29 +209,27 @@ The current ribbon action uses the same open/reveal method as the command.
 
 ### Resolution
 
-Resolution is explicit and read-only.
+Resolution is not started from the Slice 1 shell. The resolver remains read-only when later wired.
 
-Unresolved items may accept a manual DOI or ISBN and retry through the shared resolver.
+Manual DOI/ISBN repair is a later slice and will use the shared resolver.
 
 Resolver progress/system feedback should become more informative, but must remain truthful about which provider or fallback is being attempted.
 
 ### Mutation
 
-Mutation is never triggered solely by discovery or resolution.
+The setup shell has no enabled mutation action. Later mutation remains explicit and reviewed.
 
-Before mutation the user must be able to see the intended final destination.
+Before a future mutation the reviewed destination is frozen into the invocation and revalidated immediately before the rename.
 
 Unresolved, error and conflict items remain untouched.
 
-### Refresh
+### Session persistence boundary
 
-Explicit open/focus and explicit Refresh should reconcile the view with current filesystem truth.
-
-Persistent view-session state is deferred. The plugin should not create a session database merely to preserve checkbox state unless real use demonstrates a need.
+The Slice 1 runtime session survives view close/reopen within one plugin lifetime. Complete session-draft serialization/restoration remains a later slice; the opaque draft namespace is not hydrated or cleared by session/default edits.
 
 ## Redesign contract and architectural seams
 
-These are durable target decisions, not claims about shipped behavior. Behavioral authority is [Interaction Contract v0.1.2](../.codex/architecture/PDF_Intake_Interaction_Contract_v0.1.2.md), with the human's 2026-10-07 additions recorded here taking precedence where they differ. Visual concepts are design references, not executable specifications.
+These are durable target decisions. Slice 1 implements the session/configuration/persistence/authorship/planning/Apply seams and empty setup shell; later workflow capabilities remain incomplete. Behavioral authority is [Interaction Contract v0.1.2](../.codex/architecture/PDF_Intake_Interaction_Contract_v0.1.2.md), with the human's 2026-10-07 additions recorded here taking precedence where they differ. Visual concepts are design references, not executable specifications.
 
 ### Reconciled interaction authority
 
@@ -359,7 +320,7 @@ The planner derives previews from session configuration and the effective biblio
 
 ### One consequential mutation boundary
 
-**ApplyChangesService** is the domain boundary for all final PDF path/binary and optional artifact writes. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. The existing `processEntry()` is a useful simple execution kernel, not yet a complete boundary: the view currently owns batch selection, validation, replanning and execution state.
+**ApplyChangesService** is the domain boundary for all final PDF path/binary and optional artifact writes. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. Slice 1 has extracted the rename-only service; the old `processEntry()` and ItemView-owned batch orchestration have been removed. The shell exposes no Apply action until later slices add membership and review.
 
 Mutable session state feeds pure planning, which produces the reviewed **frozen Apply invocation plan** consumed by the service. That snapshot explicitly lists every operation's source, reviewed destination and relevant observed source/configuration context. It contains detached values rather than live session-entry/settings references; host `TFile` bindings are kept separate and must not be frozen. The service receives this explicit scope and returns per-PDF outcomes for the coordinator to record. It never discovers additional session entries, replans against live session configuration or repeatedly reads mutable UI/session scope during execution.
 

@@ -1,23 +1,30 @@
 import { Notice, normalizePath, Plugin, WorkspaceLeaf } from "obsidian";
-import { DEFAULT_SETTINGS } from "./types";
-import type { IntakeSettings } from "./types";
+import { ApplyChangesService } from "./apply-changes";
+import { PluginDataStore } from "./persistence";
+import { SessionCoordinator } from "./session";
 import { IntakeSettingTab } from "./settings";
 import { PdfIntakeView, PDF_INTAKE_VIEW_TYPE } from "./view";
 import { terminatePdfWorker } from "./pdf-text";
 
 export default class PdfIntakePlugin extends Plugin {
-	settings: IntakeSettings = DEFAULT_SETTINGS;
+	store!: PluginDataStore;
+	coordinator!: SessionCoordinator;
+	private openingView?: Promise<void>;
 
 	async onload(): Promise<void> {
-		const saved = (await this.loadData()) as
-			(Partial<IntakeSettings> & { intakeFolders?: string[] }) | null;
-		this.settings = {
-			...DEFAULT_SETTINGS,
-			...saved,
-			intakeFolder:
-				saved?.intakeFolder ?? saved?.intakeFolders?.[0] ?? DEFAULT_SETTINGS.intakeFolder,
-		};
-		this.registerView(PDF_INTAKE_VIEW_TYPE, (leaf) => new PdfIntakeView(leaf, this));
+		const folderPaths = this.app.vault.getAllFolders().map((folder) => folder.path);
+		this.store = new PluginDataStore({
+			loadData: () => this.loadData(),
+			saveData: (data) => this.saveData(data),
+			folderPaths,
+		});
+		await this.store.load(folderPaths);
+		const applyService = new ApplyChangesService(this.app.vault);
+		this.coordinator = new SessionCoordinator(this.store, applyService);
+		this.registerView(
+			PDF_INTAKE_VIEW_TYPE,
+			(leaf) => new PdfIntakeView(leaf, this.coordinator, this),
+		);
 		this.addSettingTab(new IntakeSettingTab(this.app, this));
 		this.addCommand({
 			id: "open-pdf-intake",
@@ -34,15 +41,20 @@ export default class PdfIntakePlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.coordinator?.dispose();
 		terminatePdfWorker();
 		this.app.workspace.detachLeavesOfType(PDF_INTAKE_VIEW_TYPE);
 	}
 
-	async saveSettings(): Promise<void> {
-		await this.saveData(this.settings);
+	private openIntakeView(): Promise<void> {
+		if (this.openingView) return this.openingView;
+		this.openingView = this.openOrFocusView().finally(() => {
+			this.openingView = undefined;
+		});
+		return this.openingView;
 	}
 
-	private async openIntakeView(): Promise<void> {
+	private async openOrFocusView(): Promise<void> {
 		const workspace = this.app.workspace;
 		let leaf: WorkspaceLeaf | undefined = workspace.getLeavesOfType(PDF_INTAKE_VIEW_TYPE)[0];
 		if (!leaf) {
@@ -51,7 +63,7 @@ export default class PdfIntakePlugin extends Plugin {
 		}
 		await workspace.revealLeaf(leaf);
 		await leaf.loadIfDeferred();
-		if (leaf.view instanceof PdfIntakeView) await leaf.view.refresh();
-		else new Notice("Could not open the PDF Intake view.");
+		if (!(leaf.view instanceof PdfIntakeView))
+			new Notice("Could not open the PDF Intake view.");
 	}
 }

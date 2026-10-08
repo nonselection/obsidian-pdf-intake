@@ -1,26 +1,55 @@
-import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PdfIntakePlugin from "./main";
-import { resolveBibliographicMetadata } from "./resolver";
-import {
-	filesInIntakeFolder,
-	planEntries,
-	processEntry,
-	validateIntakeFolder,
-	validateProcessedFolder,
-} from "./intake";
-import type { BibliographicMetadata, IntakeEntry, IntakeStatus } from "./types";
+import { formatFilename } from "./planning";
+import type { IntakeSession, SessionCoordinator, SetupConcern } from "./session";
+import { isUsableLegacyTemplate } from "./planning";
+import type { CanonicalBibliographicRecord, OutputLocation } from "./types";
 
 export const PDF_INTAKE_VIEW_TYPE = "pdf-intake-view";
 
-export class PdfIntakeView extends ItemView {
-	private plugin: PdfIntakePlugin;
-	private entries: IntakeEntry[] = [];
-	private folderError?: string;
-	private processedFolderError?: string;
-	private working = false;
+const CONCERNS: { id: SetupConcern; label: string }[] = [
+	{ id: "pdfs", label: "PDFs" },
+	{ id: "output", label: "Output" },
+	{ id: "metadata-and-naming", label: "Metadata & naming" },
+];
 
-	constructor(leaf: WorkspaceLeaf, plugin: PdfIntakePlugin) {
+const EXAMPLE_RECORD: CanonicalBibliographicRecord = {
+	title: "Example Title",
+	authorship: {
+		authors: [
+			{ kind: "person", family: "Tesar" },
+			{ kind: "person", family: "Chilisa" },
+		],
+		completeness: "complete",
+		totalCountKnown: true,
+	},
+	year: 2023,
+};
+
+function outputValue(output: OutputLocation): string {
+	if (output.mode === "current-folders") return "current-folders";
+	return output.folderPath ? `folder:${output.folderPath}` : "vault-root";
+}
+
+function outputFromValue(value: string): OutputLocation | null {
+	if (value === "current-folders") return { mode: "current-folders" };
+	if (value === "vault-root") return { mode: "vault-folder", folderPath: "" };
+	if (value.startsWith("folder:"))
+		return { mode: "vault-folder", folderPath: value.slice("folder:".length) };
+	return null;
+}
+
+export class PdfIntakeView extends ItemView {
+	private readonly coordinator: SessionCoordinator;
+	private readonly plugin: PdfIntakePlugin;
+	private unsubscribe?: () => void;
+	private session?: IntakeSession;
+	private templateDraft?: string;
+	private statusMessage?: string;
+
+	constructor(leaf: WorkspaceLeaf, coordinator: SessionCoordinator, plugin: PdfIntakePlugin) {
 		super(leaf);
+		this.coordinator = coordinator;
 		this.plugin = plugin;
 	}
 
@@ -36,272 +65,234 @@ export class PdfIntakeView extends ItemView {
 		return "inbox";
 	}
 
-	async onOpen(): Promise<void> {
+	onOpen(): Promise<void> {
 		this.containerEl.addClass("pdf-intake-view");
-		await this.refresh();
+		this.unsubscribe?.();
+		this.unsubscribe = this.coordinator.subscribe((snapshot) => {
+			this.session = snapshot;
+			this.render();
+		});
+		return Promise.resolve();
 	}
 
 	onClose(): Promise<void> {
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
 		this.containerEl.removeClass("pdf-intake-view");
 		return Promise.resolve();
 	}
 
-	refresh(): Promise<void> {
-		const settings = this.plugin.settings;
-		const folders = this.app.vault.getAllFolders().map((folder) => folder.path);
-		const intakeValidation = validateIntakeFolder(settings.intakeFolder, folders);
-		const processedValidation = validateProcessedFolder(
-			settings.processedFolderMode,
-			settings.processedFolder,
-			folders,
-		);
-		const scan = filesInIntakeFolder(
-			this.app.vault.getFiles(),
-			settings.intakeFolder,
-			folders,
-			settings.processedFolderMode,
-			settings.processedFolder,
-		);
-		this.folderError = intakeValidation.error ?? scan.error;
-		this.processedFolderError = processedValidation.error;
-		if (!intakeValidation.valid || !scan.valid) {
-			this.entries = [];
-			this.render();
-			return Promise.resolve();
-		}
-
-		const prior = new Map(this.entries.map((entry) => [entry.file.path, entry]));
-		this.entries = scan.files.map((file) => {
-			const existing = prior.get(file.path);
-			return (
-				existing ?? {
-					file,
-					selected: false,
-					status: "unprocessed",
-					manualIdentifier: "",
-				}
-			);
-		});
-		this.replan();
-		this.render();
-		return Promise.resolve();
-	}
-
-	private replan(): void {
-		planEntries(
-			this.entries,
-			this.plugin.settings,
-			this.app.vault.getFiles().map((file) => file.path),
-			this.app.vault.getAllFolders().map((folder) => folder.path),
-		);
-	}
-
 	private render(): void {
+		const session = this.session;
+		if (!session) return;
 		const { contentEl } = this;
 		contentEl.empty();
 		const header = contentEl.createDiv({ cls: "pdf-intake-header" });
 		header.createEl("h2", { text: "PDF Intake" });
-		const actions = header.createDiv({ cls: "pdf-intake-actions" });
-		this.addButton(actions, "Select all", () => {
-			for (const entry of this.entries) entry.selected = true;
-			this.render();
-		});
-		this.addButton(actions, "Select none", () => {
-			for (const entry of this.entries) entry.selected = false;
-			this.render();
-		});
-		this.addButton(actions, "Resolve selected", () => void this.resolveSelected());
-		const processButton = this.addButton(
-			actions,
-			"Process selected ready files",
-			() => void this.processSelected(),
-		);
-		processButton.disabled = this.working || !!this.processedFolderError;
-		this.addButton(actions, "Refresh", () => void this.refresh());
-
-		if (this.folderError) {
-			contentEl.createEl("p", { text: this.folderError, cls: "pdf-intake-error" });
-			contentEl.createEl("p", {
-				text: "Choose an existing vault folder in PDF Intake settings. No files were scanned.",
-			});
-			return;
+		header.createEl("p", { text: "Setup", cls: "pdf-intake-phase" });
+		this.renderConcernRail(contentEl, session);
+		const currentSummary = contentEl.createDiv({ cls: "pdf-intake-current-values" });
+		currentSummary.createEl("p", { text: this.outputSummary(session) });
+		currentSummary.createEl("p", { text: this.namingSummary(session) });
+		if (this.statusMessage) {
+			contentEl.createEl("p", { text: this.statusMessage, cls: "pdf-intake-status-message" });
 		}
-		if (this.processedFolderError) {
-			contentEl.createEl("p", { text: this.processedFolderError, cls: "pdf-intake-error" });
+		for (const diagnostic of this.plugin.store.getDiagnostics()) {
 			contentEl.createEl("p", {
-				text: "Processing is blocked until you choose an existing processed folder. Resolution and preview remain available.",
+				text: diagnostic.message,
+				cls: "pdf-intake-persistence-warning",
 			});
 		}
-		if (this.entries.length === 0) {
-			contentEl.createEl("p", {
-				text: `No PDFs found in ${this.plugin.settings.intakeFolder}.`,
+		const concern = contentEl.createDiv({ cls: "pdf-intake-concern" });
+		if (session.setupConcern === "pdfs") this.renderPdfs(concern);
+		else if (session.setupConcern === "output") this.renderOutput(concern, session);
+		else this.renderNaming(concern, session);
+	}
+
+	private renderConcernRail(container: HTMLElement, session: IntakeSession): void {
+		const rail = container.createDiv({ cls: "pdf-intake-concern-rail" });
+		rail.setAttribute("role", "tablist");
+		for (const concern of CONCERNS) {
+			const button = rail.createEl("button", { text: concern.label });
+			button.setAttribute("role", "tab");
+			button.setAttribute("aria-selected", String(session.setupConcern === concern.id));
+			button.setAttribute("aria-controls", "pdf-intake-setup-panel");
+			button.setAttribute("tabindex", session.setupConcern === concern.id ? "0" : "-1");
+			button.addEventListener("click", () => this.coordinator.setSetupConcern(concern.id));
+			button.addEventListener("keydown", (event: KeyboardEvent) => {
+				const currentIndex = CONCERNS.findIndex((item) => item.id === concern.id);
+				const nextIndex =
+					event.key === "ArrowRight"
+						? (currentIndex + 1) % CONCERNS.length
+						: event.key === "ArrowLeft"
+							? (currentIndex + CONCERNS.length - 1) % CONCERNS.length
+							: event.key === "Home"
+								? 0
+								: event.key === "End"
+									? CONCERNS.length - 1
+									: -1;
+				if (nextIndex < 0) return;
+				event.preventDefault();
+				this.coordinator.setSetupConcern(CONCERNS[nextIndex].id);
+				const tabs = this.contentEl.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+				tabs[nextIndex]?.focus();
 			});
-			return;
 		}
-		const list = contentEl.createDiv({ cls: "pdf-intake-list" });
-		for (const entry of this.entries) this.renderEntry(list, entry);
 	}
 
-	private renderEntry(list: HTMLElement, entry: IntakeEntry): void {
-		const card = list.createDiv({ cls: `pdf-intake-card is-${entry.status}` });
-		const top = card.createDiv({ cls: "pdf-intake-card-top" });
-		const selectLabel = top.createEl("label", { cls: "pdf-intake-selection" });
-		const checkbox = selectLabel.createEl("input", { type: "checkbox" });
-		checkbox.checked = entry.selected;
-		checkbox.disabled = this.working || entry.status === "processed";
-		checkbox.addEventListener("change", () => {
-			entry.selected = checkbox.checked;
-			this.render();
+	private renderPdfs(container: HTMLElement): void {
+		container.setAttribute("id", "pdf-intake-setup-panel");
+		container.setAttribute("role", "tabpanel");
+		container.createEl("h3", { text: "PDFs" });
+		container.createEl("p", { text: "No PDFs in this session yet." });
+		const add = container.createEl("button", { text: "Add PDFs" });
+		add.disabled = true;
+		add.setAttribute("aria-disabled", "true");
+		add.title = "PDF selection is not available yet";
+		container.createEl("p", {
+			text: "PDF selection is not available yet.",
+			cls: "pdf-intake-muted",
 		});
-		top.createEl("span", { text: entry.file.name, cls: "pdf-intake-file-name" });
-		top.createEl("span", { text: this.statusLabel(entry.status), cls: "pdf-intake-status" });
-
-		const paths = card.createDiv({ cls: "pdf-intake-paths" });
-		this.addDetail(paths, "Current", entry.file.path);
-		if (entry.finalPath) this.addDetail(paths, "Will become", entry.finalPath);
-
-		if (entry.metadata) this.renderMetadata(card, entry.metadata);
-		if (entry.error) card.createEl("p", { text: entry.error, cls: "pdf-intake-error" });
-		if (entry.status === "unresolved" || entry.status === "error")
-			this.renderManualResolution(card, entry);
+		const review = container.createEl("button", { text: "Begin review" });
+		review.disabled = true;
+		review.setAttribute("aria-disabled", "true");
+		review.title = "Add at least one PDF before beginning review";
+		container.createEl("p", {
+			text: "Add at least one PDF to begin review.",
+			cls: "pdf-intake-muted",
+		});
 	}
 
-	private renderMetadata(card: HTMLElement, metadata: BibliographicMetadata): void {
-		const details = card.createDiv({ cls: "pdf-intake-metadata" });
-		this.addDetail(details, "Identifier", metadata.doi ?? metadata.isbn ?? "Not detected");
-		this.addDetail(details, "Provider", metadata.source ?? "—");
-		this.addDetail(details, "Title", metadata.title ?? "—");
-		this.addDetail(details, "First author", metadata.firstAuthor ?? "—");
-		this.addDetail(details, "Year", metadata.year?.toString() ?? "—");
+	private renderOutput(container: HTMLElement, session: IntakeSession): void {
+		container.setAttribute("id", "pdf-intake-setup-panel");
+		container.setAttribute("role", "tabpanel");
+		container.createEl("h3", { text: "Output" });
+		const folders = this.app.vault
+			.getAllFolders()
+			.map((folder) => folder.path)
+			.filter(Boolean);
+		const select = container.createEl("select");
+		select.setAttribute("aria-label", "Output destination");
+		const choices = [
+			{ value: "current-folders", label: "Keep each PDF in its current folder" },
+			{ value: "vault-root", label: "Vault root" },
+			...folders.map((folder) => ({ value: `folder:${folder}`, label: folder })),
+		];
+		for (const choice of choices) {
+			select.createEl("option", { text: choice.label, value: choice.value });
+		}
+		const selected = outputValue(session.configuration.output);
+		select.value = selected;
+		if (
+			session.configuration.output.mode === "vault-folder" &&
+			session.configuration.output.folderPath &&
+			!folders.includes(session.configuration.output.folderPath)
+		) {
+			select.createEl("option", {
+				text: `Unavailable: ${session.configuration.output.folderPath}`,
+				value: selected,
+			});
+			select.value = selected;
+			container.createEl("p", {
+				text: `The saved destination ${session.configuration.output.folderPath} is unavailable. Choose an existing folder.`,
+				cls: "pdf-intake-error",
+			});
+		}
+		select.addEventListener("change", () => {
+			const output = outputFromValue(select.value);
+			if (!output) return;
+			const currentFolders = this.app.vault
+				.getAllFolders()
+				.map((folder) => folder.path)
+				.filter(Boolean);
+			void this.coordinator.updateOutput(output, currentFolders).then((result) => {
+				this.statusMessage = result.message;
+				this.render();
+			});
+		});
+		container.createEl("p", {
+			text: "The current folders choice keeps each PDF beside its own source file. Folder choices must already exist.",
+			cls: "pdf-intake-muted",
+		});
 	}
 
-	private renderManualResolution(card: HTMLElement, entry: IntakeEntry): void {
-		const form = card.createDiv({ cls: "pdf-intake-manual" });
-		const input = form.createEl("input", {
-			type: "text",
-			placeholder: "DOI or ISBN",
-			value: entry.manualIdentifier,
+	private renderNaming(container: HTMLElement, session: IntakeSession): void {
+		container.setAttribute("id", "pdf-intake-setup-panel");
+		container.setAttribute("role", "tabpanel");
+		container.createEl("h3", { text: "Metadata & naming" });
+		container.createEl("p", {
+			text: "Illustrative example",
+			cls: "pdf-intake-muted",
 		});
-		input.setAttribute("aria-label", `Manual DOI or ISBN for ${entry.file.name}`);
-		input.disabled = this.working;
-		const resolve = form.createEl("button", { text: "Resolve" });
-		resolve.disabled = this.working || !entry.manualIdentifier.trim();
-		input.addEventListener("input", () => {
-			entry.manualIdentifier = input.value;
-			resolve.disabled = this.working || !entry.manualIdentifier.trim();
-		});
-		resolve.addEventListener(
-			"click",
-			() => void this.resolveEntry(entry, entry.manualIdentifier),
+		const example = formatFilename(
+			EXAMPLE_RECORD,
+			session.configuration.metadataAndNaming.filenameFormat,
 		);
-	}
-
-	private addDetail(container: HTMLElement, label: string, value: string): void {
-		const detail = container.createDiv({ cls: "pdf-intake-detail" });
-		detail.createEl("span", { text: label, cls: "pdf-intake-detail-label" });
-		detail.createEl("span", { text: value, cls: "pdf-intake-detail-value" });
-	}
-
-	private addButton(
-		container: HTMLElement,
-		label: string,
-		action: () => void,
-	): HTMLButtonElement {
-		const button = container.createEl("button", { text: label });
-		button.disabled = this.working;
-		button.addEventListener("click", action);
-		return button;
-	}
-
-	private async resolveSelected(): Promise<void> {
-		for (const entry of this.entries) {
-			if (!entry.selected || entry.status === "processed" || entry.status === "resolving")
-				continue;
-			await this.resolveEntry(
-				entry,
-				entry.manualIdentifier.trim() ? entry.manualIdentifier : undefined,
-			);
+		container.createEl("p", {
+			text: `Example filename: ${example.filename ?? "Unavailable"}`,
+			cls: "pdf-intake-filename-example",
+		});
+		const format = session.configuration.metadataAndNaming.filenameFormat;
+		const editor = container.createEl("input", { type: "text" });
+		editor.setAttribute("aria-label", "Custom filename template");
+		const validation = container.createEl("p", { cls: "pdf-intake-validation-message" });
+		if (this.templateDraft === undefined) {
+			this.templateDraft = format.kind === "legacy-template" ? format.template : "";
 		}
-	}
-
-	private async resolveEntry(entry: IntakeEntry, manualIdentifier?: string): Promise<void> {
-		if (this.working) return;
-		this.working = true;
-		entry.status = "resolving";
-		entry.error = undefined;
-		this.render();
-		try {
-			entry.metadata = await resolveBibliographicMetadata(
-				entry.file,
-				this.app.vault,
-				manualIdentifier,
-				this.plugin.getPdfWorkerAssetPath(),
-			);
-			entry.status = entry.metadata.status === "resolved" ? "ready" : entry.metadata.status;
-			if (entry.metadata.status === "resolved") entry.manualIdentifier = "";
-			this.replan();
-		} catch (error) {
-			entry.status = "error";
-			entry.error = error instanceof Error ? error.message : String(error);
-		} finally {
-			this.working = false;
-			this.render();
-		}
-	}
-
-	private async processSelected(): Promise<void> {
-		if (this.working) return;
-		const folders = this.app.vault.getAllFolders().map((folder) => folder.path);
-		const intakeValidation = validateIntakeFolder(this.plugin.settings.intakeFolder, folders);
-		const processedValidation = validateProcessedFolder(
-			this.plugin.settings.processedFolderMode,
-			this.plugin.settings.processedFolder,
-			folders,
+		editor.value = this.templateDraft;
+		editor.placeholder =
+			format.kind === "components" ? "Use a custom template (optional)" : "Filename template";
+		validation.setText(
+			this.templateDraft && !isUsableLegacyTemplate(this.templateDraft)
+				? "Enter a valid template using supported fields. The current format stays active until this is valid."
+				: "",
 		);
-		this.folderError = intakeValidation.error;
-		this.processedFolderError = processedValidation.error;
-		if (!intakeValidation.valid || !processedValidation.valid) {
-			new Notice(
-				intakeValidation.error ??
-					processedValidation.error ??
-					"Configure valid intake and processed folders first.",
+		editor.addEventListener("input", () => {
+			this.templateDraft = editor.value;
+			validation.setText(
+				this.templateDraft && !isUsableLegacyTemplate(this.templateDraft)
+					? "Enter a valid template using supported fields. The current format stays active until this is valid."
+					: "",
 			);
+		});
+		const commit = async (): Promise<void> => {
+			const value = this.templateDraft ?? "";
+			if (!value && format.kind === "components") return;
+			if (!isUsableLegacyTemplate(value)) {
+				validation.setText("Enter a valid template using supported fields.");
+				return;
+			}
+			const result = await this.coordinator.updateMetadataAndNaming({
+				filenameFormat: { kind: "legacy-template", template: value },
+			});
+			this.statusMessage = result.message;
+			if (result.updated) this.templateDraft = value;
 			this.render();
-			return;
-		}
-
-		this.replan();
-		const selected = this.entries.filter((entry) => entry.selected && entry.status === "ready");
-		if (!selected.length) {
-			new Notice("Select at least one ready PDF to process.");
-			this.render();
-			return;
-		}
-
-		this.working = true;
-		this.render();
-		let processed = 0;
-		for (const entry of selected) {
-			if (await processEntry(entry, this.app.vault)) processed++;
-			this.replan();
-			this.render();
-		}
-		this.working = false;
-		this.render();
-		new Notice(`Processed ${processed} of ${selected.length} selected PDF(s).`);
-	}
-
-	private statusLabel(status: IntakeStatus): string {
-		const labels: Record<IntakeStatus, string> = {
-			unprocessed: "Unprocessed",
-			resolving: "Resolving…",
-			ready: "Ready to process",
-			unresolved: "Unresolved",
-			conflict: "Conflict",
-			error: "Error",
-			processed: "Processed",
-			unchanged: "Already at destination",
 		};
-		return labels[status];
+		editor.addEventListener("blur", () => void commit());
+		editor.addEventListener("keydown", (event: KeyboardEvent) => {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				void commit();
+			}
+		});
+		container.createEl("p", {
+			text: "Custom templates support {title}, {author}, {authors}, {year}, {journal}, and {publisher}.",
+			cls: "pdf-intake-muted",
+		});
+	}
+
+	private outputSummary(session: IntakeSession): string {
+		const output = session.configuration.output;
+		if (output.mode === "current-folders")
+			return "Output: each PDF stays in its current folder";
+		return `Output: ${output.folderPath || "vault root"}`;
+	}
+
+	private namingSummary(session: IntakeSession): string {
+		const format = session.configuration.metadataAndNaming.filenameFormat;
+		return format.kind === "legacy-template"
+			? `Filename: ${format.template}`
+			: "Filename: first author family [et al.] (year). title";
 	}
 }

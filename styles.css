@@ -2,115 +2,101 @@
 	height: 100%;
 	overflow: auto;
 	padding: var(--size-4-4);
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 .pdf-intake-header {
-	margin-bottom: var(--size-4-4);
+	margin-bottom: var(--size-4-3);
 }
 
 .pdf-intake-header h2 {
 	margin-top: 0;
+	margin-bottom: var(--size-2-1);
 }
 
-.pdf-intake-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--size-4-2);
+.pdf-intake-phase,
+.pdf-intake-muted {
+	color: var(--text-muted);
 }
 
-.pdf-intake-list {
-	display: grid;
-	gap: var(--size-4-3);
-}
-
-.pdf-intake-card {
-	min-width: 0;
-	padding: var(--size-4-3);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	background: var(--background-secondary);
-}
-
-.pdf-intake-card-top,
-.pdf-intake-selection {
-	display: flex;
-	align-items: center;
-	gap: var(--size-4-2);
-}
-
-.pdf-intake-card-top {
-	justify-content: space-between;
-}
-
-.pdf-intake-selection {
-	min-width: 0;
-}
-
-.pdf-intake-file-name,
-.pdf-intake-detail-value {
-	min-width: 0;
-	overflow-wrap: anywhere;
-}
-
-.pdf-intake-file-name {
-	font-weight: var(--font-semibold);
-}
-
-.pdf-intake-status {
-	flex: 0 0 auto;
-	padding: 0.15em 0.55em;
-	border-radius: var(--radius-s);
-	background: var(--background-modifier-hover);
+.pdf-intake-phase {
+	margin: 0;
 	font-size: var(--font-smaller);
 }
 
-.is-ready .pdf-intake-status,
-.is-processed .pdf-intake-status {
-	color: var(--text-success);
+.pdf-intake-concern-rail {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-4);
+	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.is-conflict .pdf-intake-status,
-.is-error .pdf-intake-status,
-.is-unresolved .pdf-intake-status {
-	color: var(--text-error);
+.pdf-intake-concern-rail button {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
 }
 
-.pdf-intake-paths,
-.pdf-intake-metadata {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-	gap: var(--size-4-2) var(--size-4-4);
-	margin-top: var(--size-4-3);
+.pdf-intake-concern-rail button[aria-selected="true"] {
+	border-bottom: 2px solid var(--interactive-accent);
+	color: var(--text-normal);
 }
 
-.pdf-intake-detail {
-	min-width: 0;
-	display: grid;
-	gap: var(--size-2-1);
+.pdf-intake-concern-rail button:focus-visible,
+.pdf-intake-concern input:focus-visible,
+.pdf-intake-concern select:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
 }
 
-.pdf-intake-detail-label {
+.pdf-intake-current-values {
+	margin-bottom: var(--size-4-4);
 	color: var(--text-muted);
 	font-size: var(--font-smaller);
 }
 
-.pdf-intake-detail-value {
+.pdf-intake-current-values p {
+	margin: 0.25em 0;
 	white-space: pre-wrap;
+	word-break: break-word;
 }
 
-.pdf-intake-manual {
-	display: flex;
-	gap: var(--size-4-2);
-	margin-top: var(--size-4-3);
+.pdf-intake-concern {
+	max-width: 48rem;
 }
 
-.pdf-intake-manual input {
-	flex: 1;
+.pdf-intake-concern h3 {
+	margin-top: 0;
+}
+
+.pdf-intake-concern select,
+.pdf-intake-concern input[type="text"] {
+	box-sizing: border-box;
+	width: min(100%, 34rem);
 	min-width: 0;
 }
 
-.pdf-intake-error {
+.pdf-intake-filename-example {
+	padding: var(--size-4-2);
+	border-left: 2px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	font-family: var(--font-monospace);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.pdf-intake-persistence-warning,
+.pdf-intake-error,
+.pdf-intake-validation-message {
 	color: var(--text-error);
+}
+
+.pdf-intake-status-message {
+	color: var(--text-warning);
 }
 
 @media (max-width: 600px) {
@@ -118,9 +104,11 @@
 		padding: var(--size-4-2);
 	}
 
-	.pdf-intake-card-top,
-	.pdf-intake-manual {
-		align-items: stretch;
-		flex-direction: column;
+	.pdf-intake-concern-rail {
+		gap: var(--size-4-1);
+	}
+
+	.pdf-intake-concern-rail button {
+		padding-inline: var(--size-4-2);
 	}
 }

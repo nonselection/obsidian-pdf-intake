@@ -1,17 +1,27 @@
 # PDF Intake roadmap
 
 Status: working roadmap  
-Last updated: 2026-10-07
+Last updated: 2026-10-08
 
-This document records planned product directions and deferred questions. The implemented baseline and approved target decisions are distinguished in [architecture.md](architecture.md). The [overall implementation plan](implementation-plan.md) owns redesign delivery boundaries/dependencies; detailed Codex plans will be written one slice at a time under `.codex/plans/`. This roadmap is not an execution plan.
+This document records planned product directions and deferred questions. Current Slice 1 behavior and approved target decisions are distinguished in [architecture.md](architecture.md). The [overall implementation plan](../.codex/architecture/implementation-plan.md) owns redesign delivery boundaries/dependencies; detailed Codex plans are maintained one slice at a time under `.codex/plans/`. This roadmap is not an execution plan.
 
 ## Near-term: explicit-session redesign
 
 The target replaces the configured intake-folder queue with a fresh empty session and explicit vault-scoped PDF addition. Presence defines scope; no permanent inclusion checkboxes, automatic scans or ordinary global Resolve button remain in the target interaction.
 
+### Implemented: Slice 1 foundation
+
+The session/configuration foundation, versioned coordinated persistence, canonical authorship/derived filename formatting, pure rename planning, frozen invocation model, rename-only ApplyChangesService and empty setup shell are implemented. Each plugin lifetime owns one empty session initialized from detached defaults. The Settings Defaults section begins with the workspace-edit policy, then default Output and Metadata & naming.
+
+The shell intentionally has no PDF admission, identification, working cards, inspectors, enabled Apply action or session-draft restoration. Add PDFs and Begin review are disabled at zero membership. The opaque draft namespace is retained by settings writes but is not decoded or replayed.
+
+### Remaining: Slice 2 and later
+
+Add the explicit vault-scoped PDF chooser and working-set editing next, under a separate detailed plan and authorization. Do not reintroduce folder scanning as a temporary substitute.
+
 Setup concerns are **PDFs**, **Output**, **Metadata & naming**. The initial rail stays present; the PDFs concern shows the admitted manifest before review. Begin review requires at least one PDF and starts automatic read-only identification. Working mode keeps stable visible cards, contextual inspection/repair and explicit Apply of the Ready subset. Difficult PDFs remain untouched.
 
-Planned foundations are a session/coordinator, durable defaults versus session values, hierarchical vault chooser and one simple rename-only ApplyChangesService. Unfinished-session draft preservation is planned by Slice 4, substantially before file-operation recovery. Existing view reuse/reveal, shared resolver, filename sanitation/path planning and PDF.js isolation survive.
+Slice 1 establishes the coordinator, defaults versus session values, pure planner, frozen Apply seam and rename-only service. Slice 2 adds the hierarchical vault chooser; Slice 3 connects read-only identification and reviewed rename Apply. Unfinished-session draft preservation is planned by Slice 4, substantially before file-operation recovery. Existing view reuse/reveal, shared resolver, filename sanitation and PDF.js isolation survive.
 
 The ribbon action already exists in current source and shares the command's open/reveal method. It is no longer pending work.
 
@@ -36,7 +46,7 @@ Field-specific formatting and a structure without a mandatory three-slot limit a
 
 Canonical authorship and derived representations are now separate approved concepts. Preserve the full ordered author list and provider-supplied structure; do not truncate canonical data for filenames or infer surnames from unstructured strings.
 
-The factory convention is `<first-author family name>[ et al.] (<year>). <title>`, for example `Tesar (2023). Example Title.pdf` or `Chilisa et al. (2016). Decolonizing and Indigenizing Evaluation Practice in Africa.pdf`. Valid existing user templates remain exact preferences; only absent/invalid preferences use the new factory convention.
+The factory convention is `<first-author family name>[ et al.] (<year>). <title>`, for example `Tesar (2023). Example Title.pdf` or `Chilisa et al. (2016). Decolonizing and Indigenizing Evaluation Practice in Africa.pdf`. Slice 1 establishes this factory representation. Valid existing user templates remain exact preferences; only absent/invalid preferences use the new factory convention.
 
 The eventual builder offers a parameterized authorship component family: first/all authors, family-only/abbreviated-given/full names, optional conditional `et al.`, explicit name ordering and separators. Labels/controls remain later design work. Current `{author}` / `{authors}` tokens are compatibility aliases, not the new canonical abstraction. Institutions, mononyms and unstructured names use conservative literal fallback with diagnostics rather than guessed family names.
 

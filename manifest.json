@@ -1,10 +1,10 @@
 {
 	"id": "pdf-intake",
 	"name": "PDF Intake",
-	"version": "1.0.0",
+	"version": "0.2.0",
 	"minAppVersion": "1.7.2",
 	"description": "Resolve bibliographic metadata and safely rename PDFs in Obsidian",
-	"author": "Luca Gabriel Oelfke",
-	"authorUrl": "https://github.com/Querulantenkind",
+	"author": "Sofia Mavzalevskaya",
+	"authorUrl": "https://github.com/nonselection",
 	"isDesktopOnly": false
 }

@@ -3,7 +3,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
 	{
-		ignores: ["main.js", "node_modules/**", "dist/**", "coverage/**", "package-lock.json"],
+		ignores: [
+			"main.js",
+			"pdf.worker.mjs",
+			"node_modules/**",
+			"dist/**",
+			"coverage/**",
+			"package-lock.json",
+		],
 	},
 	eslint.configs.recommended,
 	...tseslint.configs.recommendedTypeChecked.map((config) => ({

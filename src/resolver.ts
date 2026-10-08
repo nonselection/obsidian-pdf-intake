@@ -48,10 +48,11 @@ export async function resolveBibliographicMetadata(
 	file: TFile,
 	vault: Vault,
 	manualIdentifier?: string,
+	workerAssetPath?: string,
 ): Promise<BibliographicMetadata> {
 	try {
 		if (manualIdentifier?.trim()) return await resolveIdentifierText(manualIdentifier.trim());
-		const text = await extractTextForLookup(file, vault, 3);
+		const text = await extractTextForLookup(file, vault, 3, workerAssetPath);
 		return await resolveIdentifierText(text);
 	} catch (error) {
 		return {

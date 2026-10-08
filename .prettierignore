@@ -1,5 +1,6 @@
 node_modules/
 main.js
+pdf.worker.mjs
 package-lock.json
 dist/
 coverage/

@@ -124,4 +124,29 @@ describe("shared bibliographic resolver", () => {
 		request.mockResolvedValue({ status: 404, json: {} });
 		expect((await resolveBibliographicMetadata(file, vault)).status).toBe("unresolved");
 	});
+
+	it("returns a typed error when local worker initialization fails", async () => {
+		const { extractTextForLookup } = await import("../src/pdf-text");
+		vi.mocked(extractTextForLookup).mockRejectedValue(
+			new Error("Could not initialize PDF.js worker: blocked by worker policy"),
+		);
+
+		const result = await resolveBibliographicMetadata(
+			file,
+			vault,
+			undefined,
+			"custom-config/plugins/pdf-intake/pdf.worker.mjs",
+		);
+
+		expect(result).toMatchObject({
+			status: "error",
+			error: "Could not initialize PDF.js worker: blocked by worker policy",
+		});
+		expect(extractTextForLookup).toHaveBeenCalledWith(
+			file,
+			vault,
+			3,
+			"custom-config/plugins/pdf-intake/pdf.worker.mjs",
+		);
+	});
 });

@@ -235,6 +235,7 @@ export class PdfIntakeView extends ItemView {
 				entry.file,
 				this.app.vault,
 				manualIdentifier,
+				this.plugin.getPdfWorkerAssetPath(),
 			);
 			entry.status = entry.metadata.status === "resolved" ? "ready" : entry.metadata.status;
 			if (entry.metadata.status === "resolved") entry.manualIdentifier = "";

@@ -1,8 +1,9 @@
-import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, normalizePath, Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS } from "./types";
 import type { IntakeSettings } from "./types";
 import { IntakeSettingTab } from "./settings";
 import { PdfIntakeView, PDF_INTAKE_VIEW_TYPE } from "./view";
+import { terminatePdfWorker } from "./pdf-text";
 
 export default class PdfIntakePlugin extends Plugin {
 	settings: IntakeSettings = DEFAULT_SETTINGS;
@@ -23,9 +24,17 @@ export default class PdfIntakePlugin extends Plugin {
 			name: "Open PDF Intake",
 			callback: () => void this.openIntakeView(),
 		});
+		this.addRibbonIcon("inbox", "Open PDF Intake", () => void this.openIntakeView());
+	}
+
+	getPdfWorkerAssetPath(): string {
+		const pluginDirectory =
+			this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+		return normalizePath(`${pluginDirectory}/pdf.worker.mjs`);
 	}
 
 	onunload(): void {
+		terminatePdfWorker();
 		this.app.workspace.detachLeavesOfType(PDF_INTAKE_VIEW_TYPE);
 	}
 

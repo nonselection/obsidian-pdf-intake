@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import { copyFile } from "node:fs/promises";
 import process from "process";
 import builtins from "builtin-modules";
 
@@ -9,6 +10,8 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = process.argv[2] === "production";
+
+await copyFile("node_modules/pdfjs-dist/build/pdf.worker.mjs", "pdf.worker.mjs");
 
 const context = await esbuild.context({
 	banner: {

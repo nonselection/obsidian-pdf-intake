@@ -55,8 +55,9 @@ try {
 	await requireDirectory(vaultRoot, "Configured vault");
 	await requireDirectory(path.join(vaultRoot, ".obsidian"), "Obsidian configuration directory");
 
-	const artifacts = ["main.js", "manifest.json", "styles.css"];
-	for (const required of artifacts.slice(0, 2)) {
+	const artifacts = ["main.js", "manifest.json", "styles.css", "pdf.worker.mjs"];
+	const requiredArtifacts = ["main.js", "manifest.json", "pdf.worker.mjs"];
+	for (const required of requiredArtifacts) {
 		try {
 			if (!(await stat(path.join(repoRoot, required))).isFile()) {
 				throw new Error(`${required} is not a file`);

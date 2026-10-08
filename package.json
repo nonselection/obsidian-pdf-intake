@@ -1,8 +1,16 @@
 {
 	"name": "obsidian-pdf-intake",
-	"version": "1.0.0",
+	"version": "0.2.0",
 	"description": "Resolve bibliographic metadata and safely rename PDFs in Obsidian",
 	"main": "main.js",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/nonselection/obsidian-pdf-intake.git"
+	},
+	"homepage": "https://github.com/nonselection/obsidian-pdf-intake#readme",
+	"bugs": {
+		"url": "https://github.com/nonselection/obsidian-pdf-intake/issues"
+	},
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "node esbuild.config.mjs production",
@@ -22,7 +30,7 @@
 		"pdf",
 		"metadata"
 	],
-	"author": "Luca Gabriel Oelfke",
+	"author": "Sofia Mavzalevskaya",
 	"license": "MIT",
 	"dependencies": {
 		"pdfjs-dist": "^4.0.379"

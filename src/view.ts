@@ -1,9 +1,9 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PdfIntakePlugin from "./main";
-import { formatFilename } from "./planning";
+import { formatFilename, isUsableLegacyTemplate } from "./planning";
 import type { IntakeSession, SessionCoordinator, SetupConcern } from "./session";
-import { isUsableLegacyTemplate } from "./planning";
 import type { CanonicalBibliographicRecord, OutputLocation } from "./types";
+import { VaultPdfChooserModal } from "./vault-pdf-chooser";
 
 export const PDF_INTAKE_VIEW_TYPE = "pdf-intake-view";
 
@@ -46,6 +46,7 @@ export class PdfIntakeView extends ItemView {
 	private session?: IntakeSession;
 	private templateDraft?: string;
 	private statusMessage?: string;
+	private chooser?: VaultPdfChooserModal;
 
 	constructor(leaf: WorkspaceLeaf, coordinator: SessionCoordinator, plugin: PdfIntakePlugin) {
 		super(leaf);
@@ -76,6 +77,8 @@ export class PdfIntakeView extends ItemView {
 	}
 
 	onClose(): Promise<void> {
+		this.chooser?.close();
+		this.chooser = undefined;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.containerEl.removeClass("pdf-intake-view");
@@ -104,7 +107,7 @@ export class PdfIntakeView extends ItemView {
 			});
 		}
 		const concern = contentEl.createDiv({ cls: "pdf-intake-concern" });
-		if (session.setupConcern === "pdfs") this.renderPdfs(concern);
+		if (session.setupConcern === "pdfs") this.renderPdfs(concern, session);
 		else if (session.setupConcern === "output") this.renderOutput(concern, session);
 		else this.renderNaming(concern, session);
 	}
@@ -140,27 +143,91 @@ export class PdfIntakeView extends ItemView {
 		}
 	}
 
-	private renderPdfs(container: HTMLElement): void {
+	private renderPdfs(container: HTMLElement, session: IntakeSession): void {
 		container.setAttribute("id", "pdf-intake-setup-panel");
 		container.setAttribute("role", "tabpanel");
 		container.createEl("h3", { text: "PDFs" });
-		container.createEl("p", { text: "No PDFs in this session yet." });
-		const add = container.createEl("button", { text: "Add PDFs" });
-		add.disabled = true;
-		add.setAttribute("aria-disabled", "true");
-		add.title = "PDF selection is not available yet";
-		container.createEl("p", {
-			text: "PDF selection is not available yet.",
-			cls: "pdf-intake-muted",
+		if (session.items.length === 0) {
+			container.createEl("p", {
+				text: "No PDFs in this session yet.",
+				cls: "pdf-intake-muted",
+			});
+		} else {
+			container.createEl("p", {
+				text: `${session.items.length} PDF${session.items.length === 1 ? "" : "s"}`,
+				cls: "pdf-intake-pdf-count",
+			});
+			const manifest = container.createDiv({ cls: "pdf-intake-pdf-manifest" });
+			for (const item of session.items) {
+				const entry = manifest.createDiv({ cls: "pdf-intake-pdf-entry" });
+				const details = entry.createDiv({ cls: "pdf-intake-pdf-entry-details" });
+				const basename =
+					item.sourceObservation.path.split("/").pop() ?? item.sourceObservation.path;
+				const slash = item.sourceObservation.path.lastIndexOf("/");
+				details.createEl("span", {
+					text: basename,
+					cls: "pdf-intake-pdf-filename",
+				});
+				details.createEl("span", {
+					text: slash < 0 ? "Vault root" : item.sourceObservation.path.slice(0, slash),
+					cls: "pdf-intake-pdf-parent-path",
+				});
+				if (item.sourceHealth && item.sourceHealth !== "current") {
+					details.createEl("span", {
+						text: this.sourceHealthLabel(item.sourceHealth),
+						cls: "pdf-intake-pdf-source-health",
+					});
+				}
+				const remove = entry.createEl("button", { text: "Remove" });
+				const parentPath =
+					slash < 0 ? "vault root" : item.sourceObservation.path.slice(0, slash);
+				remove.setAttribute("aria-label", `Remove ${basename} from ${parentPath}`);
+				remove.addEventListener("click", () => {
+					this.coordinator.removePdf(item.id, session.id);
+				});
+			}
+		}
+		const add = container.createEl("button", {
+			text: session.items.length === 0 ? "Add PDFs" : "Add more PDFs",
 		});
+		add.addEventListener("click", () => this.openPdfChooser(session.id));
 		const review = container.createEl("button", { text: "Begin review" });
 		review.disabled = true;
 		review.setAttribute("aria-disabled", "true");
-		review.title = "Add at least one PDF before beginning review";
-		container.createEl("p", {
-			text: "Add at least one PDF to begin review.",
-			cls: "pdf-intake-muted",
-		});
+		const reviewReason =
+			session.items.length === 0
+				? "Add at least one PDF before beginning review."
+				: "Review is not available yet.";
+		review.title = reviewReason;
+		container.createEl("p", { text: reviewReason, cls: "pdf-intake-muted" });
+	}
+
+	private openPdfChooser(expectedSessionId: string): void {
+		if (!this.coordinator.refreshSourceHealth(expectedSessionId)) return;
+		const chooser = new VaultPdfChooserModal(
+			this.app,
+			this.coordinator,
+			expectedSessionId,
+			() => {
+				this.chooser = undefined;
+			},
+		);
+		this.chooser = chooser;
+		chooser.open();
+	}
+
+	private sourceHealthLabel(
+		health: NonNullable<IntakeSession["items"][number]["sourceHealth"]>,
+	): string {
+		const labels = {
+			missing: "Source missing",
+			renamed: "Source renamed",
+			replaced: "Source replaced",
+			changed: "Source changed",
+			"binding-unavailable": "Source unavailable",
+			current: "",
+		};
+		return labels[health];
 	}
 
 	private renderOutput(container: HTMLElement, session: IntakeSession): void {

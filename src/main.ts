@@ -20,7 +20,7 @@ export default class PdfIntakePlugin extends Plugin {
 		});
 		await this.store.load(folderPaths);
 		const applyService = new ApplyChangesService(this.app.vault);
-		this.coordinator = new SessionCoordinator(this.store, applyService);
+		this.coordinator = new SessionCoordinator(this.store, applyService, this.app.vault);
 		this.registerView(
 			PDF_INTAKE_VIEW_TYPE,
 			(leaf) => new PdfIntakeView(leaf, this.coordinator, this),

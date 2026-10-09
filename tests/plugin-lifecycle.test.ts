@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { requestUrl } from "obsidian";
-import { TestElement, WorkspaceLeaf } from "./obsidian";
+import { Modal, TFolder, TestElement, WorkspaceLeaf } from "./obsidian";
 import type PdfIntakePlugin from "../src/main";
 import type { PdfIntakeView } from "../src/view";
 
@@ -25,10 +25,13 @@ function makeHost() {
 	const adapterRead = vi.fn(() => Promise.resolve("worker source"));
 	const folders = [{ path: "Sources", type: "folder" }];
 	const leaves: DeferredLeaf[] = [];
+	const root = new TFolder("/");
 	let creator: ((leaf: unknown) => unknown) | undefined;
 	let created = 0;
 	const vault = {
 		configDir: ".obsidian",
+		getRoot: vi.fn(() => root),
+		getAbstractFileByPath: vi.fn(() => null),
 		getAllFolders: vi.fn(() => folders),
 		getFiles,
 		readBinary,
@@ -87,7 +90,6 @@ describe("plugin lifecycle", () => {
 		});
 		vi.stubGlobal("Worker", workerConstructor);
 		try {
-			vi.resetModules();
 			const { default: PdfIntakePlugin } = await import("../src/main");
 			const host = makeHost();
 			const plugin = new PdfIntakePlugin(
@@ -118,12 +120,18 @@ describe("plugin lifecycle", () => {
 			expect(host.leaves[0]?.view).toBeTruthy();
 			const openedView = host.leaves[0]?.view;
 			if (!openedView) throw new Error("PDF Intake view was not created");
-			expect(
-				openedView.contentEl.find((element) => element.textContent === "Add PDFs"),
-			).toHaveLength(1);
+			const add = openedView.contentEl.find(
+				(element) => element.textContent === "Add PDFs",
+			)[0];
+			expect(add?.disabled).toBe(false);
+			const modalCount = Modal.instances.length;
+			add?.trigger("click");
+			expect(Modal.instances).toHaveLength(modalCount + 1);
+			expect(Modal.instances[Modal.instances.length - 1]?.opened).toBe(true);
 			const sessionId = plugin.coordinator.getSnapshot().id;
 			plugin.coordinator.setSetupConcern("output");
 			await openedView.onClose();
+			expect(Modal.instances[Modal.instances.length - 1]?.opened).toBe(false);
 			host.leaves[0].view = undefined;
 			host.leaves[0].deferred = true;
 			command.callback();
@@ -138,7 +146,6 @@ describe("plugin lifecycle", () => {
 	});
 
 	it("keeps the worker asset path rooted in the configured plugin directory", async () => {
-		vi.resetModules();
 		const { default: PdfIntakePlugin } = await import("../src/main");
 		const host = makeHost();
 		const plugin = new PdfIntakePlugin(

@@ -1,4 +1,4 @@
-import type { TFile } from "obsidian";
+import { TFile, type Vault } from "obsidian";
 import type {
 	ApplyChangesService,
 	ApplyInvocationResult,
@@ -30,8 +30,22 @@ export interface SessionPdf {
 	id: string;
 	sourceObservation: SourceObservation;
 	identification: IdentificationState;
+	sourceHealth?: PdfSourceHealth;
 	plan?: RenamePlanResult;
 	applyOutcome?: RenameApplyOutcome;
+}
+
+export type PdfSourceHealth =
+	"current" | "missing" | "renamed" | "replaced" | "changed" | "binding-unavailable";
+
+export type PdfPathClassification =
+	"selectable" | "already-represented" | "unavailable" | "stale-session";
+
+export interface PdfAdmissionResult {
+	staleSession: boolean;
+	addedItemIds: string[];
+	duplicates: string[];
+	rejected: { path: string; reason: string }[];
 }
 
 export interface IntakeSession {
@@ -60,6 +74,12 @@ function same(left: unknown, right: unknown): boolean {
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function isVaultRelativePath(path: string): boolean {
+	if (!path || path.startsWith("/") || path.includes("\\")) return false;
+	const parts = path.split("/");
+	return parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
 export function createFreshSession(configuration: SessionConfiguration, id: string): IntakeSession {
 	return {
 		id,
@@ -78,6 +98,7 @@ export function createFreshSession(configuration: SessionConfiguration, id: stri
 export class SessionCoordinator {
 	private readonly store: PluginDataStore;
 	private readonly applyService?: ApplyChangesService;
+	private readonly vault?: Vault;
 	private session: IntakeSession;
 	private readonly sourceBindings = new Map<string, TFile>();
 	private readonly listeners = new Set<(snapshot: IntakeSession) => void>();
@@ -86,14 +107,94 @@ export class SessionCoordinator {
 	private activeInvocationId?: string;
 	private disposed = false;
 
-	constructor(store: PluginDataStore, applyService?: ApplyChangesService) {
+	constructor(store: PluginDataStore, applyService?: ApplyChangesService, vault?: Vault) {
 		this.store = store;
 		this.applyService = applyService;
+		this.vault = vault;
 		this.session = createFreshSession(store.getSettings().defaults, this.nextSessionId());
 	}
 
 	getSnapshot(): IntakeSession {
-		return clone(this.session);
+		const snapshot = clone(this.session);
+		snapshot.items = snapshot.items.map((item) => ({
+			...item,
+			sourceHealth: this.getSourceHealth(item),
+		}));
+		return snapshot;
+	}
+
+	/** Classifies one currently visible vault path without exposing its live TFile binding. */
+	classifyPdfPath(path: string, expectedSessionId: string): PdfPathClassification {
+		if (this.session.id !== expectedSessionId) return "stale-session";
+		const file = this.currentPdfAtPath(path);
+		if (!file) return "unavailable";
+		return this.isAlreadyRepresented(path, file) ? "already-represented" : "selectable";
+	}
+
+	/** Refreshes derived source-health values without changing session revision or membership. */
+	refreshSourceHealth(expectedSessionId: string): boolean {
+		if (this.session.id !== expectedSessionId) return false;
+		this.emit();
+		return true;
+	}
+
+	/** Resolves chooser paths again at confirmation; accepted membership stays coordinator-owned. */
+	addPdfs(paths: readonly string[], expectedSessionId: string): PdfAdmissionResult {
+		const result: PdfAdmissionResult = {
+			staleSession: this.session.id !== expectedSessionId,
+			addedItemIds: [],
+			duplicates: [],
+			rejected: [],
+		};
+		if (result.staleSession) return result;
+
+		for (const path of paths) {
+			const file = this.currentPdfAtPath(path);
+			if (!file) {
+				result.rejected.push({
+					path,
+					reason: "Missing, folder, non-PDF, or invalid source",
+				});
+				continue;
+			}
+			if (this.isAlreadyRepresented(path, file)) {
+				result.duplicates.push(path);
+				continue;
+			}
+
+			const id = globalThis.crypto.randomUUID();
+			this.session.items.push({
+				id,
+				sourceObservation: {
+					path: file.path,
+					mtime: file.stat.mtime,
+					size: file.stat.size,
+				},
+				identification: { status: "unattempted" },
+			});
+			this.sourceBindings.set(id, file);
+			result.addedItemIds.push(id);
+		}
+
+		if (result.addedItemIds.length > 0) {
+			this.session.revision++;
+			this.invalidatePlanning();
+		}
+		this.emit();
+		return clone(result);
+	}
+
+	/** Removes only session membership; stale callbacks from another session are ignored. */
+	removePdf(itemId: string, expectedSessionId: string): boolean {
+		if (this.session.id !== expectedSessionId) return false;
+		const index = this.session.items.findIndex((item) => item.id === itemId);
+		if (index < 0) return false;
+		this.session.items.splice(index, 1);
+		this.sourceBindings.delete(itemId);
+		this.session.revision++;
+		this.invalidatePlanning();
+		this.emit();
+		return true;
 	}
 
 	subscribe(listener: (snapshot: IntakeSession) => void): () => void {
@@ -123,7 +224,7 @@ export class SessionCoordinator {
 		if (this.session.items.length === 0) {
 			return { allowed: false, reason: "Add at least one PDF before beginning review." };
 		}
-		return { allowed: false, reason: "Review identification is not available in this slice." };
+		return { allowed: false, reason: "Review is not available yet." };
 	}
 
 	createNewSession(): IntakeSession {
@@ -300,9 +401,7 @@ export class SessionCoordinator {
 		}
 		this.session.configuration = clone(next);
 		this.session.revision++;
-		this.session.planningSnapshot = null;
-		this.planningBasis = null;
-		this.session.items = this.session.items.map((item) => ({ ...item, plan: undefined }));
+		this.invalidatePlanning();
 		this.emit();
 		if (policy === "session-only") return { updated: true, savedForFutureSessions: false };
 		const settingsPatch: SettingsPatch = { defaults: clone(patch) };
@@ -322,6 +421,51 @@ export class SessionCoordinator {
 		if (this.disposed) return;
 		const snapshot = this.getSnapshot();
 		for (const listener of this.listeners) listener(clone(snapshot));
+	}
+
+	private invalidatePlanning(): void {
+		this.session.planningSnapshot = null;
+		this.planningBasis = null;
+		this.session.items = this.session.items.map((item) => ({ ...item, plan: undefined }));
+	}
+
+	private currentPdfAtPath(path: string): TFile | undefined {
+		if (!this.vault || !isVaultRelativePath(path)) return undefined;
+		const current = this.vault.getAbstractFileByPath(path);
+		if (!(current instanceof TFile)) return undefined;
+		if (current.path !== path || current.extension.toLowerCase() !== "pdf") return undefined;
+		if (
+			!Number.isFinite(current.stat?.mtime) ||
+			!Number.isFinite(current.stat?.size) ||
+			current.stat.size < 0
+		)
+			return undefined;
+		return current;
+	}
+
+	private isAlreadyRepresented(path: string, file: TFile): boolean {
+		return this.session.items.some(
+			(item) =>
+				item.sourceObservation.path === path || this.sourceBindings.get(item.id) === file,
+		);
+	}
+
+	private getSourceHealth(item: SessionPdf): PdfSourceHealth {
+		const binding = this.sourceBindings.get(item.id);
+		if (!binding || !this.vault) return "binding-unavailable";
+		const currentAtOriginalPath = this.vault.getAbstractFileByPath(item.sourceObservation.path);
+		if (currentAtOriginalPath && currentAtOriginalPath !== binding) return "replaced";
+		const currentAtBoundPath = this.vault.getAbstractFileByPath(binding.path);
+		if (currentAtBoundPath !== binding) return currentAtBoundPath ? "replaced" : "missing";
+		if (binding.extension.toLowerCase() !== "pdf") return "changed";
+		if (
+			binding.stat.mtime !== item.sourceObservation.mtime ||
+			binding.stat.size !== item.sourceObservation.size
+		)
+			return "changed";
+		if (binding.path !== item.sourceObservation.path) return "renamed";
+		if (currentAtOriginalPath !== binding) return "missing";
+		return "current";
 	}
 
 	private createPlanningInput(

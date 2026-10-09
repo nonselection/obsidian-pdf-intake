@@ -21,8 +21,10 @@ export class TestElement {
 	readonly handlers = new Map<string, Handler[]>();
 	textContent = "";
 	value = "";
+	checked = false;
 	placeholder = "";
 	title = "";
+	type = "";
 	disabled = false;
 	className = "";
 	focused = false;
@@ -124,9 +126,10 @@ export class TestElement {
 		if (typeof options.value === "string") this.value = options.value;
 		if (typeof options.placeholder === "string") this.placeholder = options.placeholder;
 		if (typeof options.title === "string") this.title = options.title;
+		if (typeof options.type === "string") this.type = options.type;
 		if (typeof options.cls === "string") this.className = options.cls;
 		for (const [key, value] of Object.entries(options)) {
-			if (["text", "value", "placeholder", "title", "cls", "type"].includes(key)) continue;
+			if (["text", "value", "placeholder", "title", "cls"].includes(key)) continue;
 			if (typeof value === "string" || typeof value === "boolean")
 				this.setAttribute(key, String(value));
 		}
@@ -191,6 +194,89 @@ export class ItemView {
 		this.containerEl = new TestElement("div");
 		this.contentEl = this.containerEl.createDiv();
 	}
+}
+
+export class TAbstractFile {
+	readonly name: string;
+	readonly path: string;
+	parent: TFolder | null;
+
+	constructor(path: string, parent: TFolder | null = null) {
+		this.path = path;
+		const parts = path.split("/").filter(Boolean);
+		this.name = parts[parts.length - 1] ?? "";
+		this.parent = parent;
+	}
+}
+
+export class TFile extends TAbstractFile {
+	readonly basename: string;
+	readonly extension: string;
+	stat: { ctime: number; mtime: number; size: number };
+
+	constructor(
+		path: string,
+		stat = { ctime: 0, mtime: 1, size: 1 },
+		parent: TFolder | null = null,
+	) {
+		super(path, parent);
+		const dot = this.name.lastIndexOf(".");
+		this.extension = dot < 0 ? "" : this.name.slice(dot + 1);
+		this.basename = dot < 0 ? this.name : this.name.slice(0, dot);
+		this.stat = stat;
+	}
+}
+
+export class TFolder extends TAbstractFile {
+	children: TAbstractFile[] = [];
+	constructor(path: string, parent: TFolder | null = null) {
+		super(path, parent);
+	}
+	isRoot(): boolean {
+		return this.path === "" || this.path === "/";
+	}
+}
+
+export interface Vault {
+	getRoot(): TFolder;
+	getAbstractFileByPath(path: string): TAbstractFile | null;
+	getAllFolders(): TFolder[];
+	getFiles(): TFile[];
+	getAllLoadedFiles(): TAbstractFile[];
+}
+
+export class Modal {
+	static readonly instances: Modal[] = [];
+	readonly containerEl = new TestElement("div");
+	readonly modalEl = this.containerEl.createDiv();
+	readonly titleEl = this.modalEl.createEl("h2");
+	readonly contentEl = this.modalEl.createDiv();
+	readonly app: App;
+	opened = false;
+
+	constructor(app: App) {
+		this.app = app;
+		Modal.instances.push(this);
+	}
+
+	open(): void {
+		this.opened = true;
+		this.onOpen();
+	}
+
+	close(): void {
+		if (!this.opened) return;
+		this.opened = false;
+		this.onClose();
+	}
+
+	setTitle(title: string): this {
+		this.titleEl.setText(title);
+		return this;
+	}
+
+	onOpen(): void {}
+	onClose(): void {}
 }
 
 export class PluginSettingTab {
@@ -286,7 +372,9 @@ export class Setting {
 	}
 }
 
-export class App {}
+export class App {
+	vault!: Vault;
+}
 
 export class Notice {
 	static readonly messages: string[] = [];

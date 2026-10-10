@@ -56,29 +56,116 @@ export function terminatePdfWorker(): void {
 	workerBlobUrl = null;
 }
 
-export async function extractTextForLookup(
+export interface PdfTextSegment {
+	pageNumber: number;
+	text: string;
+	startOffset: number;
+}
+
+export interface PdfTextPage {
+	pageNumber: number;
+	text: string;
+	segments: readonly PdfTextSegment[];
+}
+
+export interface PdfTextEvidence {
+	pages: readonly PdfTextPage[];
+	infoTitle?: string;
+}
+
+export class IdentificationCancelledError extends Error {
+	constructor() {
+		super("PDF identification work was canceled");
+		this.name = "IdentificationCancelledError";
+	}
+}
+
+export interface PdfExtractionOptions {
+	shouldCancel?: () => boolean;
+}
+
+function checkpoint(options?: PdfExtractionOptions): void {
+	if (options?.shouldCancel?.()) throw new IdentificationCancelledError();
+}
+
+function assemblePageSegments(pageNumber: number, items: readonly unknown[]): PdfTextPage {
+	const rawSegments: string[] = [];
+	let current = "";
+	const flush = (): void => {
+		const text = current.trim();
+		if (text) rawSegments.push(text);
+		current = "";
+	};
+	for (const item of items) {
+		if (item && typeof item === "object" && "str" in item && typeof item.str === "string") {
+			const text = item.str.trim();
+			if (text) current = current ? current + " " + text : text;
+			if ("hasEOL" in item && item.hasEOL === true) flush();
+		}
+	}
+	flush();
+	const segments: PdfTextSegment[] = [];
+	let offset = 0;
+	for (const text of rawSegments) {
+		segments.push({ pageNumber, text, startOffset: offset });
+		offset += text.length + 1;
+	}
+	return {
+		pageNumber,
+		text: rawSegments.join("\n"),
+		segments,
+	};
+}
+
+export async function extractPdfEvidence(
 	file: TFile,
 	vault: Vault,
 	maxPages = 3,
 	workerAssetPath?: string,
-): Promise<string> {
+	options?: PdfExtractionOptions,
+): Promise<PdfTextEvidence> {
+	checkpoint(options);
 	const buffer = await vault.readBinary(file);
+	checkpoint(options);
 	if (!workerAssetPath) throw new Error("PDF.js worker asset path is unavailable");
+	checkpoint(options);
 	await ensurePdfWorker(vault, workerAssetPath);
-	const pdf = await pdfjsLib.getDocument({
+	checkpoint(options);
+	const loadingTask = pdfjsLib.getDocument({
 		data: new Uint8Array(buffer),
 		disableAutoFetch: true,
 		disableStream: true,
-	}).promise;
+	});
+	let pdf: Awaited<typeof loadingTask.promise> | undefined;
 	try {
-		const pages: string[] = [];
-		for (let pageNumber = 1; pageNumber <= Math.min(maxPages, pdf.numPages); pageNumber++) {
+		checkpoint(options);
+		pdf = await loadingTask.promise;
+		checkpoint(options);
+		let infoTitle: string | undefined;
+		try {
+			const metadata = await pdf.getMetadata();
+			const info = metadata.info as Record<string, unknown> | undefined;
+			if (typeof info?.Title === "string" && info.Title.trim()) infoTitle = info.Title;
+		} catch {
+			// PDF Info metadata is optional evidence; extraction can continue without it.
+		}
+		const pages: PdfTextPage[] = [];
+		const pageLimit = Math.min(3, Math.max(0, Math.floor(maxPages)), pdf.numPages);
+		for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber++) {
+			checkpoint(options);
 			const page = await pdf.getPage(pageNumber);
 			const content = await page.getTextContent();
-			pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+			checkpoint(options);
+			pages.push(assemblePageSegments(pageNumber, content.items));
 		}
-		return pages.join("\n");
+		checkpoint(options);
+		return { pages, ...(infoTitle ? { infoTitle } : {}) };
 	} finally {
-		await pdf.destroy();
+		try {
+			if (pdf) await pdf.destroy();
+			else await loadingTask.destroy();
+		} catch {
+			// Cleanup failures do not replace the extraction outcome or leak PDF.js resources silently.
+		}
 	}
 }

@@ -1,5 +1,10 @@
 import { deriveAuthorship, type AuthorshipDiagnostic } from "./authorship";
-import type { CanonicalBibliographicRecord, FilenameFormat, SessionConfiguration } from "./types";
+import type {
+	CanonicalBibliographicRecord,
+	FilenameFormat,
+	IdentificationEvidence,
+	SessionConfiguration,
+} from "./types";
 
 export interface SourceObservation {
 	path: string;
@@ -10,8 +15,12 @@ export interface SourceObservation {
 export type IdentificationState =
 	| { status: "unattempted" }
 	| { status: "identifying" }
-	| { status: "resolved"; record: CanonicalBibliographicRecord }
-	| { status: "needs-user"; reason: string };
+	| {
+			status: "resolved";
+			record: CanonicalBibliographicRecord;
+			evidence?: IdentificationEvidence;
+	  }
+	| { status: "needs-user"; reason: string; evidence?: IdentificationEvidence };
 
 export type PlanBlockedReason =
 	| "identification-pending"
@@ -144,8 +153,10 @@ const TEMPLATE_SAMPLE: CanonicalBibliographicRecord = {
 		totalCountKnown: true,
 	},
 	year: 2023,
+	isbns: [],
 	journal: "Example Journal",
 	publisher: "Example Publisher",
+	provenance: { provider: "crossref", route: "doi", identifier: "10.1234/example" },
 };
 
 export function isUsableLegacyTemplate(template: string): boolean {

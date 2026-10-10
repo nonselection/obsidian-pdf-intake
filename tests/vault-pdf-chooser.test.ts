@@ -84,7 +84,7 @@ async function createChooser() {
 		folderPaths: [],
 	});
 	await store.load([]);
-	const coordinator = new SessionCoordinator(store, undefined, host.vault);
+	const coordinator = new SessionCoordinator(store, { vault: host.vault });
 	const app = new App();
 	app.vault = host.vault;
 	const dismissed = vi.fn();

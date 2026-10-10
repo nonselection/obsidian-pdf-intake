@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { Modal, requestUrl, TFile, TFolder, TestElement, WorkspaceLeaf } from "./obsidian";
 import type PdfIntakePlugin from "../src/main";
 import type { PdfIntakeView } from "../src/view";
+import type { IdentificationResult } from "../src/resolver";
+import type { IdentificationRunContext } from "../src/session";
+import type { ApplyInvocationResult } from "../src/apply-changes";
 
 type TestView = PdfIntakeView & { contentEl: TestElement };
 type TestPlugin = PdfIntakePlugin & {
@@ -79,12 +82,38 @@ function textOf(root: TestElement): string {
 	return [root.textContent, ...root.children.map(textOf)].filter(Boolean).join(" ");
 }
 
+function deferredIdentification() {
+	let resolve!: (result: IdentificationResult) => void;
+	const promise = new Promise<IdentificationResult>((yes) => {
+		resolve = yes;
+	});
+	return { promise, resolve };
+}
+
+function acceptedRecord(title: string): IdentificationResult {
+	return {
+		status: "accepted",
+		record: {
+			title,
+			authorship: {
+				authors: [{ kind: "person", given: "Grace", family: "Hopper" }],
+				completeness: "complete",
+				totalCountKnown: true,
+			},
+			year: 2024,
+			isbns: [],
+			provenance: { provider: "crossref", route: "doi", identifier: "10.1234/example" },
+		},
+		evidence: { identifiers: [], attempts: [], titleCandidates: [title], diagnostics: [] },
+	};
+}
+
 async function tick(): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("PDF Intake setup shell", () => {
-	it("renders setup concerns with active Add PDFs and disabled Begin review", async () => {
+	it("renders setup concerns with active Add PDFs and a zero-membership Begin review guard", async () => {
 		const workerConstructor = vi.fn(() => {
 			throw new Error("PDF extraction must remain lazy");
 		});
@@ -111,6 +140,7 @@ describe("PDF Intake setup shell", () => {
 			expect(add?.disabled).toBe(false);
 			expect(add?.getAttribute("aria-disabled")).toBeNull();
 			expect(review?.disabled).toBe(true);
+			expect(review?.getAttribute("aria-disabled")).toBe("true");
 			expect(textOf(view.contentEl)).toContain("No PDFs in this session yet.");
 			expect(textOf(view.contentEl)).not.toContain("PDF selection is not available yet.");
 			expect(
@@ -168,7 +198,11 @@ describe("PDF Intake setup shell", () => {
 					.map((element) => element.textContent),
 			).toEqual(["Folder", "Other"]);
 			expect(text).toContain("Add more PDFs");
-			expect(text).toContain("Review is not available yet.");
+			const review = view.contentEl.find(
+				(element) => element.tagName === "button" && element.textContent === "Begin review",
+			)[0];
+			expect(review?.disabled).toBe(false);
+			expect(text).not.toContain("Review is not available yet.");
 			expect(text).not.toContain("identification is implemented");
 			expect(
 				view.contentEl
@@ -230,10 +264,10 @@ describe("PDF Intake setup shell", () => {
 			expect(Modal.instances).toHaveLength(modalCount + 1);
 			expect(Modal.instances[Modal.instances.length - 1]?.opened).toBe(true);
 			Modal.instances[Modal.instances.length - 1]?.close();
-			expect(plugin.coordinator.beginReview()).toEqual({
-				allowed: false,
-				reason: "Review is not available yet.",
-			});
+			expect(plugin.coordinator.beginReview()).toEqual({ allowed: true });
+			expect(textOf(view.contentEl)).toContain("Working");
+			expect(textOf(view.contentEl)).not.toContain("Add more PDFs");
+			expect(plugin.coordinator.returnToSetup(sessionId)).toBe(true);
 			const remainingRemove = view.contentEl.find(
 				(element) =>
 					element.tagName === "button" &&
@@ -241,7 +275,7 @@ describe("PDF Intake setup shell", () => {
 			)[0];
 			remainingRemove?.trigger("click");
 			expect(plugin.coordinator.getSnapshot().items).toEqual([]);
-			expect(plugin.coordinator.getSnapshot().revision).toBe(3);
+			expect(plugin.coordinator.getSnapshot().revision).toBe(4);
 			expect(textOf(view.contentEl)).toContain("No PDFs in this session yet.");
 			expect(plugin.coordinator.beginReview()).toEqual({
 				allowed: false,
@@ -384,5 +418,165 @@ describe("PDF Intake setup shell", () => {
 		expect(selects.every((select: TestElement) => select.disabled)).toBe(true);
 		await view.onClose();
 		plugin.onunload();
+	});
+
+	it("renders a stable working surface and re-entry retains completed identification", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const first = addFile("A/first.pdf");
+		const second = addFile("B/second.pdf");
+		const pending = deferredIdentification();
+		const needsYou: IdentificationResult = {
+			status: "needs-you",
+			reason: "No matching provider result.",
+			evidence: {
+				identifiers: [],
+				attempts: [],
+				titleCandidates: ["A plausible document title"],
+				diagnostics: [],
+			},
+		};
+		const runner = vi.fn((file: TFile, _context: IdentificationRunContext) =>
+			file === first ? pending.promise : Promise.resolve(needsYou),
+		);
+		Object.assign(plugin.coordinator, { identificationRunner: runner });
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([first.path, second.path], sessionId);
+		const begin = (): void => {
+			view.contentEl
+				.find(
+					(element) =>
+						element.tagName === "button" && element.textContent === "Begin review",
+				)[0]
+				?.trigger("click");
+		};
+		begin();
+		await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[1]?.identification.status).toBe(
+				"needs-user",
+			),
+		);
+		const cards = (): TestElement[] =>
+			view.contentEl.find((element) => element.getAttribute("data-item-id") !== null);
+		const countText = (): string =>
+			view.contentEl.find((element) => element.className === "pdf-intake-working-counts")[0]
+				?.textContent ?? "";
+		expect(countText()).toBe("Identifying 1 · Needs you 1");
+		expect(cards().map((card) => card.getAttribute("data-item-id"))).toEqual(
+			admission.addedItemIds,
+		);
+		expect(textOf(view.contentEl)).not.toContain("Add more PDFs");
+		expect(textOf(view.contentEl)).not.toContain("Resolve");
+		expect(textOf(view.contentEl)).not.toContain("Inspect");
+
+		view.contentEl
+			.find(
+				(element) => element.tagName === "button" && element.textContent === "Edit session",
+			)[0]
+			?.focus();
+		pending.resolve(acceptedRecord("An Identified Book Title"));
+		await vi.waitFor(() => expect(countText()).toBe("Needs you 1 · Ready 1"));
+		expect(
+			view.contentEl.find(
+				(element) =>
+					element.getAttribute("data-focus-key") === "edit-session" && element.focused,
+			).length,
+		).toBe(1);
+		expect(cards().map((card) => card.getAttribute("data-item-id"))).toEqual(
+			admission.addedItemIds,
+		);
+		expect(textOf(cards()[0])).toContain("Hopper (2024). An Identified Book Title.pdf");
+		expect(textOf(view.contentEl)).not.toContain("2 PDFs");
+
+		view.contentEl
+			.find(
+				(element) => element.tagName === "button" && element.textContent === "Edit session",
+			)[0]
+			?.trigger("click");
+		expect(plugin.coordinator.getSnapshot().phase).toBe("setup");
+		expect(
+			view.contentEl.find((element) => element.textContent === "Add more PDFs").length,
+		).toBe(1);
+		const third = addFile("C/third.pdf");
+		plugin.coordinator.addPdfs([third.path], sessionId);
+		begin();
+		await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(3));
+		expect(plugin.coordinator.getSnapshot().items[0]?.identification.status).toBe("resolved");
+		expect(plugin.coordinator.getSnapshot().items[1]?.identification.status).toBe("needs-user");
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("keeps an explicit Apply running when the working view closes", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const source = addFile("source.pdf");
+		plugin.coordinator.addPdfs([source.path], plugin.coordinator.getSnapshot().id);
+		Object.assign(plugin.coordinator, {
+			identificationRunner: () => Promise.resolve(acceptedRecord("A Book Title")),
+		});
+		let finish!: (result: ApplyInvocationResult) => void;
+		const apply = vi.fn(
+			() => new Promise<ApplyInvocationResult>((resolve) => (finish = resolve)),
+		);
+		const coordinator = plugin.coordinator as unknown as { applyService: unknown };
+		Object.defineProperty(coordinator, "applyService", {
+			configurable: true,
+			value: { apply },
+		});
+		view.contentEl
+			.find(
+				(element) => element.tagName === "button" && element.textContent === "Begin review",
+			)[0]
+			?.trigger("click");
+		await vi.waitFor(() => expect(textOf(view.contentEl)).toContain("Ready 1"));
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === "apply-changes")[0]
+			?.trigger("click");
+		await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+		await view.onClose();
+		expect(plugin.coordinator.getSnapshot().applyState.status).toBe("applying");
+		finish({ status: "rejected", message: "controlled test settlement" });
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().applyState.status).toBe("rejected"),
+		);
+		plugin.onunload();
+	});
+
+	it("uses native DOM focus queries instead of Obsidian's selector-based find helper", async () => {
+		const { plugin, view } = await createShell();
+		const action = new TestElement("button");
+		action.setAttribute("data-focus-key", "restore-target");
+		const contentEl = view.contentEl as unknown as {
+			contains: (candidate: unknown) => boolean;
+			find: (selector: string) => unknown[];
+			querySelectorAll: (selector: string) => NodeListOf<HTMLElement>;
+		};
+		const hostFind = vi.fn((selector: string) => {
+			if (typeof selector !== "string") throw new Error("find expects a CSS selector");
+			return [];
+		});
+		const querySelectorAll = vi.fn(() => [action]);
+		Object.defineProperty(contentEl, "contains", { configurable: true, value: () => false });
+		Object.defineProperty(contentEl, "find", { configurable: true, value: hostFind });
+		Object.defineProperty(contentEl, "querySelectorAll", {
+			configurable: true,
+			value: querySelectorAll,
+		});
+		vi.stubGlobal("document", { activeElement: null });
+		try {
+			const focusMethods = view as unknown as {
+				focusedActionKey: () => string | undefined;
+				restoreActionFocus: (key: string | undefined) => void;
+			};
+			expect(focusMethods.focusedActionKey()).toBeUndefined();
+			focusMethods.restoreActionFocus("restore-target");
+			expect(hostFind).not.toHaveBeenCalled();
+			expect(querySelectorAll).toHaveBeenCalledWith("[data-focus-key]");
+			expect(action.focused).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+			await view.onClose();
+			plugin.onunload();
+		}
 	});
 });

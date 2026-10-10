@@ -1,12 +1,12 @@
 # PDF Intake
 
-A small Obsidian plugin for normalizing the bibliographic envelope of PDFs already stored in a vault. The current Slice 1 implementation provides an explicit-session foundation, durable defaults and an honest setup shell. PDF selection, identification, working cards and an enabled Apply flow are not available yet.
+A small Obsidian plugin for normalizing the bibliographic envelope of PDFs already stored in a vault. The Slice 3 implementation supports explicit PDF sessions, automatic identification on Begin review, a stable working surface, and reviewed rename-only Apply.
 
 ## Command
 
 - **Open PDF Intake** — Opens or focuses the existing PDF Intake workspace view. It does not scan a folder or add PDFs to the session.
 
-The shell starts with a fresh empty session and the PDFs / Output / Metadata & naming setup concerns. Add PDFs and Begin review are disabled until later slices provide PDF admission and identification. Output and naming configuration can be inspected and edited now.
+Each plugin lifetime starts with a fresh empty session and the PDFs / Output / Metadata & naming setup concerns. Add PDFs uses the explicit vault-scoped chooser. Begin review automatically identifies current session PDFs; the working surface keeps cards in session order and shows Identifying, Needs you, Ready, No changes needed, and Applied outcomes. Apply includes only the current eligible Ready rename subset. Identification results and membership are transient across plugin reload.
 
 ## Settings
 
@@ -14,11 +14,11 @@ The shell starts with a fresh empty session and the PDFs / Output / Metadata & n
 - **Default output** — Keep each PDF in its current folder, choose an existing vault folder, or explicitly choose the vault root.
 - **Default filename convention** — The factory format is `<first-author family name>[ et al.] (<year>). <title>`. Valid migrated filename templates are retained exactly.
 
-Legacy intake-folder settings never populate a session. A malformed/empty legacy destination migrates to current source folders; it is not treated as vault root. Plugin data uses a versioned envelope with separate settings/default and opaque unfinished-session namespaces. Slice 1 retains that draft namespace but does not restore it.
+Legacy intake-folder settings never populate a session. A malformed/empty legacy destination migrates to current source folders; it is not treated as vault root. Plugin data uses a versioned envelope with separate settings/default and opaque unfinished-session namespaces. The unfinished-session namespace is retained by settings writes, but Slice 3 does not save or restore session membership or identification results.
 
-The canonical authorship model preserves full provider order and uncertainty separately from filename representations. Current provider mapping remains lossy; identification must not be connected to the new session model until ordered authorship and unresolved provider positions can be preserved.
+Canonical authorship preserves full provider order and unresolved positions separately from filename representations. DOI/ISBN evidence is checked against bounded local title candidates before a provider result can become canonical. Identification reads at most the first three PDF pages when review begins; PDF.js remains lazy and isolated. Apply renames paths only and does not write PDF bytes or metadata.
 
-PDF Intake does not modify PDF bytes. Its PDF.js worker remains isolated and lazy for later read-only identification, and the current shell does not initialize extraction.
+PDF Intake does not modify PDF bytes. Mobile/iPad qualification and the later repair inspector, retry controls and session-draft recovery remain future work.
 
 ## Development
 

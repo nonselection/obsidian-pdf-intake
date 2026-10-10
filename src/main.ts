@@ -5,6 +5,7 @@ import { SessionCoordinator } from "./session";
 import { IntakeSettingTab } from "./settings";
 import { PdfIntakeView, PDF_INTAKE_VIEW_TYPE } from "./view";
 import { terminatePdfWorker } from "./pdf-text";
+import { identifyPdf } from "./resolver";
 
 export default class PdfIntakePlugin extends Plugin {
 	store!: PluginDataStore;
@@ -12,7 +13,7 @@ export default class PdfIntakePlugin extends Plugin {
 	private openingView?: Promise<void>;
 
 	async onload(): Promise<void> {
-		const folderPaths = this.app.vault.getAllFolders().map((folder) => folder.path);
+		const folderPaths = this.vaultFolderPaths();
 		this.store = new PluginDataStore({
 			loadData: () => this.loadData(),
 			saveData: (data) => this.saveData(data),
@@ -20,7 +21,22 @@ export default class PdfIntakePlugin extends Plugin {
 		});
 		await this.store.load(folderPaths);
 		const applyService = new ApplyChangesService(this.app.vault);
-		this.coordinator = new SessionCoordinator(this.store, applyService, this.app.vault);
+		const vault = this.app.vault;
+		this.coordinator = new SessionCoordinator(this.store, {
+			applyService,
+			vault,
+			planningEnvironment: {
+				getSnapshot: () => ({
+					filePaths: vault.getFiles().map((file) => file.path),
+					folderPaths: ["", ...this.vaultFolderPaths()],
+				}),
+				getOutputFolderPaths: () => ["", ...this.vaultFolderPaths()],
+			},
+			identificationRunner: (file, context) =>
+				identifyPdf(file, vault, this.getPdfWorkerAssetPath(), {
+					shouldCancel: context.shouldCancel,
+				}),
+		});
 		this.registerView(
 			PDF_INTAKE_VIEW_TYPE,
 			(leaf) => new PdfIntakeView(leaf, this.coordinator, this),
@@ -38,6 +54,17 @@ export default class PdfIntakePlugin extends Plugin {
 		const pluginDirectory =
 			this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 		return normalizePath(`${pluginDirectory}/pdf.worker.mjs`);
+	}
+
+	private vaultFolderPaths(): string[] {
+		return [
+			...new Set(
+				this.app.vault
+					.getAllFolders()
+					.map((folder) => folder.path)
+					.filter((path) => !!path && path !== "/"),
+			),
+		];
 	}
 
 	onunload(): void {

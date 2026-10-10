@@ -27,6 +27,8 @@ function record(
 			totalCountKnown: true,
 		},
 		year: 2024,
+		isbns: [],
+		provenance: { provider: "crossref", route: "doi", identifier: "10.1234/test" },
 		...overrides,
 	};
 }
@@ -164,6 +166,24 @@ describe("pure rename planning", () => {
 			"missing-title",
 			"missing-authorship",
 		]);
+	});
+
+	it("keeps partial authorship eligible when the configured filename requirements are met", () => {
+		const partial = item(
+			"partial-authorship",
+			"Inbox/partial.pdf",
+			record({
+				authorship: {
+					authors: [
+						{ kind: "person", family: "Known" },
+						{ kind: "unresolved", position: 1, reference: "/authors/OL2A" },
+					],
+					completeness: "partial",
+					totalCountKnown: true,
+				},
+			}),
+		);
+		expect(planRenames(input([partial])).results[0]).toMatchObject({ status: "eligible" });
 	});
 
 	it("blocks existing files, folders, planned collisions and overwrite chains", () => {

@@ -69,6 +69,62 @@
 	max-width: 48rem;
 }
 
+.pdf-intake-working-context {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-4);
+}
+
+.pdf-intake-working-counts {
+	flex: 1 1 12rem;
+	color: var(--text-muted);
+	font-size: var(--font-smaller);
+}
+
+.pdf-intake-working-cards {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: var(--size-4-2);
+}
+
+.pdf-intake-working-card {
+	min-width: 0;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+}
+
+.pdf-intake-card-source,
+.pdf-intake-card-state,
+.pdf-intake-card-title,
+.pdf-intake-card-metadata,
+.pdf-intake-card-proposal,
+.pdf-intake-card-reason {
+	margin: 0.25em 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.pdf-intake-card-source {
+	font-size: var(--font-ui-medium);
+}
+
+.pdf-intake-card-state,
+.pdf-intake-card-metadata {
+	color: var(--text-muted);
+	font-size: var(--font-smaller);
+}
+
+.pdf-intake-card-proposal {
+	font-family: var(--font-monospace);
+}
+
+.pdf-intake-card-reason {
+	color: var(--text-warning);
+}
+
 .pdf-intake-concern h3 {
 	margin-top: 0;
 }

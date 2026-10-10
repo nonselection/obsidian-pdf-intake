@@ -1,27 +1,27 @@
 # PDF Intake roadmap
 
 Status: working roadmap  
-Last updated: 2026-10-08
+Last updated: 2026-10-09
 
-This document records planned product directions and deferred questions. Current Slice 1 behavior and approved target decisions are distinguished in [architecture.md](architecture.md). The [overall implementation plan](../.codex/architecture/implementation-plan.md) owns redesign delivery boundaries/dependencies; detailed Codex plans are maintained one slice at a time under `.codex/plans/`. This roadmap is not an execution plan.
+This document records planned product directions and deferred questions. Current Slice 3 behavior and approved target decisions are distinguished in [architecture.md](architecture.md). The [overall implementation plan](../.codex/architecture/implementation-plan.md) owns redesign delivery boundaries/dependencies; detailed Codex plans are maintained one slice at a time under `.codex/plans/`. This roadmap is not an execution plan.
 
 ## Near-term: explicit-session redesign
 
 The target replaces the configured intake-folder queue with a fresh empty session and explicit vault-scoped PDF addition. Presence defines scope; no permanent inclusion checkboxes, automatic scans or ordinary global Resolve button remain in the target interaction.
 
-### Implemented: Slice 1 foundation
+### Implemented: Slices 1–3
 
-The session/configuration foundation, versioned coordinated persistence, canonical authorship/derived filename formatting, pure rename planning, frozen invocation model, rename-only ApplyChangesService and empty setup shell are implemented. Each plugin lifetime owns one empty session initialized from detached defaults. The Settings Defaults section begins with the workspace-edit policy, then default Output and Metadata & naming.
+The session/configuration foundation, versioned coordinated persistence, canonical authorship/derived filename formatting, explicit vault-scoped PDF admission, bounded automatic identification, stable membership-ordered working cards, pure rename planning, frozen invocation model, and rename-only ApplyChangesService are implemented. Each plugin lifetime starts with an empty session initialized from detached defaults. The Settings Defaults section begins with the workspace-edit policy, then default Output and Metadata & naming.
 
-The shell intentionally has no PDF admission, identification, working cards, inspectors, enabled Apply action or session-draft restoration. Add PDFs and Begin review are disabled at zero membership. The opaque draft namespace is retained by settings writes but is not decoded or replayed.
+Begin review requires positive membership and starts identification automatically. The working surface shows Identifying, Needs you and Ready counts in fixed order, with no Resolve action. Only eligible Ready changes can enter the frozen Apply scope. PDF text extraction is limited to the first three pages and starts only during review. Slice 3 membership and identification evidence remain transient across plugin reload; no unfinished-session draft is written or restored.
 
-### Remaining: Slice 2 and later
+### Remaining work
 
-Add the explicit vault-scoped PDF chooser and working-set editing next, under a separate detailed plan and authorization. Do not reintroduce folder scanning as a temporary substitute.
+Manual DOI/ISBN repair and retry, contextual inspection, editable metadata, unfinished-session recovery, metadata writeback and later artifact/recovery capabilities remain future work under the overall implementation decomposition. Final visual/accessibility and mobile/iPad qualification also remain outstanding. Do not reintroduce folder scanning as a substitute for explicit admission.
 
-Setup concerns are **PDFs**, **Output**, **Metadata & naming**. The initial rail stays present; the PDFs concern shows the admitted manifest before review. Begin review requires at least one PDF and starts automatic read-only identification. Working mode keeps stable visible cards, contextual inspection/repair and explicit Apply of the Ready subset. Difficult PDFs remain untouched.
+Setup concerns are **PDFs**, **Output**, **Metadata & naming**. The PDFs concern shows the explicit manifest before review. Working mode keeps stable visible cards and explicit Apply of the Ready subset. Difficult PDFs remain untouched until a future repair interaction is designed.
 
-Slice 1 establishes the coordinator, defaults versus session values, pure planner, frozen Apply seam and rename-only service. Slice 2 adds the hierarchical vault chooser; Slice 3 connects read-only identification and reviewed rename Apply. Unfinished-session draft preservation is planned by Slice 4, substantially before file-operation recovery. Existing view reuse/reveal, shared resolver, filename sanitation and PDF.js isolation survive.
+Existing view reuse/reveal, shared resolver, filename sanitation and isolated lazy PDF.js worker behavior remain in place.
 
 The ribbon action already exists in current source and shares the command's open/reveal method. It is no longer pending work.
 
@@ -50,7 +50,7 @@ The factory convention is `<first-author family name>[ et al.] (<year>). <title>
 
 The eventual builder offers a parameterized authorship component family: first/all authors, family-only/abbreviated-given/full names, optional conditional `et al.`, explicit name ordering and separators. Labels/controls remain later design work. Current `{author}` / `{authors}` tokens are compatibility aliases, not the new canonical abstraction. Institutions, mononyms and unstructured names use conservative literal fallback with diagnostics rather than guessed family names.
 
-Slice 1 establishes canonical types and the pure formatter/component seam without the full builder. Before Slice 3 automatic identification, fix current provider-mapping losses: Crossref flattens given/family and drops unsupported entries; Open Library caps references at five and skips failures. Preserve all ordered references/positions and explicit incompleteness; verify actual provider fields before mapping additional structure. See the [source audit and durable contract](architecture.md#current-provider-authorship-evidence-and-delivery-dependency).
+Canonical authorship and filename representations remain separate. Current Crossref and Open Library adapters preserve ordered positions and explicit incompleteness; Open Library detail requests are bounded without truncating the canonical sequence. See the [current provider contract](architecture.md#current-provider-authorship-evidence).
 
 ### Intake view polish
 
@@ -71,52 +71,13 @@ The fixed working context bar keeps Edit session/state on the left, status infor
 
 Avoid returning to a wide spreadsheet/table layout.
 
-## Resolver hardening
+## Resolver follow-up
 
-### Investigate missed visible DOIs
+Slice 3 implements ordered DOI/ISBN evidence from the first three PDF pages, DOI and checksum-validated ISBN normalization, direct identifier lookup with exact local-title corroboration, and bounded title search through the existing Crossref and Open Library providers. The working surface reports the broad Identifying state; it does not expose provider-stage detail or a manual repair/retry control.
 
-Several real PDFs visibly contain a DOI that current automatic detection did not find.
+Further resolver changes remain evidence-driven. When a controlled PDF exposes a failure, capture the smallest useful fixture where appropriate, inspect the actual PDF.js text and identify whether the cause is the three-page window, line wrapping/encoding, text-item order, extraction, normalization, or provider lookup. Add regression tests for understood failures before changing extraction or provider scope. Do not add OCR, full-document indexing, fuzzy matching or new providers as a shortcut, and do not turn failed identification into invented metadata.
 
-Before adding providers or large heuristics:
-
-1. capture representative failing PDFs in the development test set where legally/practically appropriate;
-2. inspect the actual text PDF.js extracts from the first pages;
-3. determine whether failures come from:
-    - DOI outside the current page window;
-    - line breaks or inserted whitespace;
-    - punctuation/encoding artifacts;
-    - text-layer ordering;
-    - extraction failure;
-    - identifier-regex normalization;
-    - provider lookup rather than extraction.
-
-Add regression tests for understood failure modes.
-
-### Better progress/system feedback
-
-When resolution is taking place, surface truthful stage information, for example:
-
-- extracting PDF text;
-- checking detected DOI;
-- querying Crossref;
-- checking detected ISBN;
-- querying Open Library;
-- trying manual identifier.
-
-Do not fake progress percentages.
-
-### Resolver fallback strategy
-
-After failure modes are understood, evaluate whether to add:
-
-- stronger DOI/ISBN normalization;
-- additional page-window strategies;
-- title/author fallback search;
-- additional bibliographic providers.
-
-Any provider addition should have a clear reason, defined data mapping, error behavior and test coverage.
-
-Do not turn failed identification into invented metadata.
+Any later progress feedback must name only the stage actually underway and must not use fabricated percentages. Manual identifiers and retry belong to a later repair interaction.
 
 ## Core next capability: embedded PDF metadata normalization
 

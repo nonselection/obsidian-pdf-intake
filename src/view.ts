@@ -1,8 +1,9 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PdfIntakePlugin from "./main";
-import { formatFilename, isUsableLegacyTemplate } from "./planning";
-import type { IntakeSession, SessionCoordinator, SetupConcern } from "./session";
-import type { CanonicalBibliographicRecord, OutputLocation } from "./types";
+import { deriveAuthorship } from "./authorship";
+import { isUsableLegacyTemplate } from "./planning";
+import type { IntakeSessionSnapshot, SessionCoordinator, SetupConcern } from "./session";
+import type { OutputLocation } from "./types";
 import { VaultPdfChooserModal } from "./vault-pdf-chooser";
 
 export const PDF_INTAKE_VIEW_TYPE = "pdf-intake-view";
@@ -13,18 +14,13 @@ const CONCERNS: { id: SetupConcern; label: string }[] = [
 	{ id: "metadata-and-naming", label: "Metadata & naming" },
 ];
 
-const EXAMPLE_RECORD: CanonicalBibliographicRecord = {
-	title: "Example Title",
-	authorship: {
-		authors: [
-			{ kind: "person", family: "Tesar" },
-			{ kind: "person", family: "Chilisa" },
-		],
-		completeness: "complete",
-		totalCountKnown: true,
-	},
-	year: 2023,
-};
+type WorkingCardState = "identifying" | "needs-you" | "ready" | "no-change" | "applied";
+
+interface FocusableAction {
+	focused?: boolean;
+	getAttribute(name: string): string | null;
+	focus?: () => void;
+}
 
 function outputValue(output: OutputLocation): string {
 	if (output.mode === "current-folders") return "current-folders";
@@ -43,7 +39,7 @@ export class PdfIntakeView extends ItemView {
 	private readonly coordinator: SessionCoordinator;
 	private readonly plugin: PdfIntakePlugin;
 	private unsubscribe?: () => void;
-	private session?: IntakeSession;
+	private session?: IntakeSessionSnapshot;
 	private templateDraft?: string;
 	private statusMessage?: string;
 	private chooser?: VaultPdfChooserModal;
@@ -88,8 +84,14 @@ export class PdfIntakeView extends ItemView {
 	private render(): void {
 		const session = this.session;
 		if (!session) return;
+		const focusKey = this.focusedActionKey();
 		const { contentEl } = this;
 		contentEl.empty();
+		if (session.phase === "working") {
+			this.renderWorkingSurface(contentEl, session);
+			this.restoreActionFocus(focusKey);
+			return;
+		}
 		const header = contentEl.createDiv({ cls: "pdf-intake-header" });
 		header.createEl("h2", { text: "PDF Intake" });
 		header.createEl("p", { text: "Setup", cls: "pdf-intake-phase" });
@@ -110,13 +112,16 @@ export class PdfIntakeView extends ItemView {
 		if (session.setupConcern === "pdfs") this.renderPdfs(concern, session);
 		else if (session.setupConcern === "output") this.renderOutput(concern, session);
 		else this.renderNaming(concern, session);
+		this.restoreActionFocus(focusKey);
 	}
 
-	private renderConcernRail(container: HTMLElement, session: IntakeSession): void {
+	private renderConcernRail(container: HTMLElement, session: IntakeSessionSnapshot): void {
 		const rail = container.createDiv({ cls: "pdf-intake-concern-rail" });
 		rail.setAttribute("role", "tablist");
 		for (const concern of CONCERNS) {
 			const button = rail.createEl("button", { text: concern.label });
+			button.setAttribute("data-focus-key", `setup-tab-${concern.id}`);
+			button.disabled = session.applyState.status === "applying";
 			button.setAttribute("role", "tab");
 			button.setAttribute("aria-selected", String(session.setupConcern === concern.id));
 			button.setAttribute("aria-controls", "pdf-intake-setup-panel");
@@ -143,7 +148,7 @@ export class PdfIntakeView extends ItemView {
 		}
 	}
 
-	private renderPdfs(container: HTMLElement, session: IntakeSession): void {
+	private renderPdfs(container: HTMLElement, session: IntakeSessionSnapshot): void {
 		container.setAttribute("id", "pdf-intake-setup-panel");
 		container.setAttribute("role", "tabpanel");
 		container.createEl("h3", { text: "PDFs" });
@@ -179,6 +184,8 @@ export class PdfIntakeView extends ItemView {
 					});
 				}
 				const remove = entry.createEl("button", { text: "Remove" });
+				remove.setAttribute("data-focus-key", `remove-pdf-${item.id}`);
+				remove.disabled = session.applyState.status === "applying";
 				const parentPath =
 					slash < 0 ? "vault root" : item.sourceObservation.path.slice(0, slash);
 				remove.setAttribute("aria-label", `Remove ${basename} from ${parentPath}`);
@@ -190,16 +197,184 @@ export class PdfIntakeView extends ItemView {
 		const add = container.createEl("button", {
 			text: session.items.length === 0 ? "Add PDFs" : "Add more PDFs",
 		});
+		add.setAttribute("data-focus-key", "add-pdfs");
+		add.disabled = session.applyState.status === "applying";
 		add.addEventListener("click", () => this.openPdfChooser(session.id));
 		const review = container.createEl("button", { text: "Begin review" });
-		review.disabled = true;
-		review.setAttribute("aria-disabled", "true");
+		review.setAttribute("data-focus-key", "begin-review");
+		review.disabled = session.items.length === 0 || session.applyState.status === "applying";
+		review.setAttribute("aria-disabled", String(review.disabled));
 		const reviewReason =
-			session.items.length === 0
-				? "Add at least one PDF before beginning review."
-				: "Review is not available yet.";
+			session.items.length === 0 ? "Add at least one PDF before beginning review." : "";
 		review.title = reviewReason;
-		container.createEl("p", { text: reviewReason, cls: "pdf-intake-muted" });
+		review.addEventListener("click", () => {
+			const result = this.coordinator.beginReview();
+			this.statusMessage = result.reason;
+			this.render();
+		});
+		if (reviewReason) container.createEl("p", { text: reviewReason, cls: "pdf-intake-muted" });
+	}
+
+	private renderWorkingSurface(container: HTMLElement, session: IntakeSessionSnapshot): void {
+		const header = container.createDiv({ cls: "pdf-intake-header" });
+		header.createEl("h2", { text: "PDF Intake" });
+		header.createEl("p", { text: "Working", cls: "pdf-intake-phase" });
+
+		const states = session.items.map((item) => this.workingCardState(item));
+		const countOrder: readonly [WorkingCardState, string][] = [
+			["identifying", "Identifying"],
+			["needs-you", "Needs you"],
+			["ready", "Ready"],
+		];
+		const context = container.createDiv({ cls: "pdf-intake-working-context" });
+		const edit = context.createEl("button", { text: "Edit session" });
+		edit.setAttribute("data-focus-key", "edit-session");
+		edit.disabled = session.applyState.status === "applying";
+		edit.addEventListener("click", () => {
+			this.coordinator.returnToSetup(session.id);
+		});
+		const summary = context.createDiv({ cls: "pdf-intake-working-counts" });
+		summary.setAttribute("aria-live", "polite");
+		const activeCounts = countOrder
+			.map(([state, label]) => {
+				const count = states.filter((candidate) => candidate === state).length;
+				return count > 0 ? `${label} ${count}` : "";
+			})
+			.filter(Boolean);
+		summary.setText(activeCounts.join(" · "));
+		const readyCount = states.filter((state) => state === "ready").length;
+		const apply = context.createEl("button", {
+			text: readyCount ? `Apply changes (${readyCount})` : "Apply changes",
+		});
+		apply.setAttribute("data-focus-key", "apply-changes");
+		apply.disabled = readyCount === 0 || session.applyState.status === "applying";
+		apply.addEventListener("click", () => {
+			void this.coordinator.applyReviewedPlan().then((result) => {
+				this.statusMessage =
+					result.status === "completed" ? "Apply finished." : result.message;
+				this.render();
+			});
+		});
+		if (this.statusMessage) {
+			container.createEl("p", {
+				text: this.statusMessage,
+				cls: "pdf-intake-status-message",
+			});
+		}
+		if (session.applyState.status === "applying") {
+			container.createEl("p", {
+				text: "Applying the reviewed changes…",
+				cls: "pdf-intake-muted",
+			});
+		}
+		const cards = container.createDiv({ cls: "pdf-intake-working-cards" });
+		cards.setAttribute("aria-label", "PDFs in session order");
+		for (let index = 0; index < session.items.length; index++) {
+			const item = session.items[index];
+			if (item) this.renderWorkingCard(cards, item, states[index] ?? "needs-you");
+		}
+	}
+
+	private workingCardState(item: IntakeSessionSnapshot["items"][number]): WorkingCardState {
+		if (item.sourceHealth && item.sourceHealth !== "current") return "needs-you";
+		if (
+			item.identification.status === "unattempted" ||
+			item.identification.status === "identifying"
+		) {
+			return "identifying";
+		}
+		if (item.identification.status === "needs-user") return "needs-you";
+		if (item.plan?.status === "eligible") return "ready";
+		if (item.plan?.status === "blocked") return "needs-you";
+		if (item.plan?.status === "no-change") {
+			return item.applyOutcome?.status === "renamed" ? "applied" : "no-change";
+		}
+		return "needs-you";
+	}
+
+	private renderWorkingCard(
+		container: HTMLElement,
+		item: IntakeSessionSnapshot["items"][number],
+		state: WorkingCardState,
+	): void {
+		const card = container.createDiv({ cls: `pdf-intake-working-card is-${state}` });
+		card.setAttribute("data-item-id", item.id);
+		const sourceName =
+			item.sourceObservation.path.split("/").pop() ?? item.sourceObservation.path;
+		card.createEl("h3", { text: sourceName, cls: "pdf-intake-card-source" });
+		const label =
+			state === "needs-you"
+				? "Needs you"
+				: state === "ready"
+					? "Ready"
+					: state === "identifying"
+						? "Identifying"
+						: state === "applied"
+							? "Applied"
+							: "No changes needed";
+		card.createEl("p", { text: label, cls: "pdf-intake-card-state" });
+
+		if (state === "identifying") return;
+		if (state === "ready" && item.identification.status === "resolved") {
+			card.createEl("p", {
+				text: item.identification.record.title ?? "Untitled work",
+				cls: "pdf-intake-card-title",
+			});
+			const author = deriveAuthorship(item.identification.record.authorship, {
+				selection: "first",
+				nameStyle: "full",
+				etAl: "conditional",
+				nameOrder: "family-given",
+				separator: ", ",
+			});
+			const authorYear = [author.value, item.identification.record.year?.toString()]
+				.filter((value): value is string => !!value)
+				.join(" · ");
+			if (authorYear)
+				card.createEl("p", { text: authorYear, cls: "pdf-intake-card-metadata" });
+			if (item.plan?.status === "eligible") {
+				card.createEl("p", {
+					text: item.plan.proposedRename.proposedName,
+					cls: "pdf-intake-card-proposal",
+				});
+			}
+			if (item.applyOutcome && item.applyOutcome.status !== "renamed") {
+				card.createEl("p", {
+					text: item.applyOutcome.message,
+					cls: "pdf-intake-card-reason",
+				});
+			}
+			return;
+		}
+		if (state === "needs-you") {
+			if (item.identification.status === "resolved" && item.identification.record.title) {
+				card.createEl("p", {
+					text: item.identification.record.title,
+					cls: "pdf-intake-card-title",
+				});
+			} else if (item.identification.status === "needs-user") {
+				const evidenceTitle = item.identification.evidence?.titleCandidates[0];
+				if (evidenceTitle) {
+					card.createEl("p", { text: evidenceTitle, cls: "pdf-intake-card-title" });
+				}
+				const identifier = item.identification.evidence?.identifiers.find(
+					(candidate) => candidate.valid && candidate.normalizedValue,
+				);
+				if (identifier?.normalizedValue) {
+					card.createEl("p", {
+						text: `${identifier.type.toUpperCase()}: ${identifier.normalizedValue}`,
+						cls: "pdf-intake-card-metadata",
+					});
+				}
+			}
+			const reason =
+				item.plan?.status === "blocked"
+					? item.plan.message
+					: item.identification.status === "needs-user"
+						? item.identification.reason
+						: (item.sourceIssue ?? "This PDF needs review.");
+			card.createEl("p", { text: reason, cls: "pdf-intake-card-reason" });
+		}
 	}
 
 	private openPdfChooser(expectedSessionId: string): void {
@@ -217,28 +392,28 @@ export class PdfIntakeView extends ItemView {
 	}
 
 	private sourceHealthLabel(
-		health: NonNullable<IntakeSession["items"][number]["sourceHealth"]>,
+		health: NonNullable<IntakeSessionSnapshot["items"][number]["sourceHealth"]>,
 	): string {
 		const labels = {
 			missing: "Source missing",
 			renamed: "Source renamed",
 			replaced: "Source replaced",
 			changed: "Source changed",
+			unverified: "Source not verified",
 			"binding-unavailable": "Source unavailable",
 			current: "",
 		};
 		return labels[health];
 	}
 
-	private renderOutput(container: HTMLElement, session: IntakeSession): void {
+	private renderOutput(container: HTMLElement, session: IntakeSessionSnapshot): void {
 		container.setAttribute("id", "pdf-intake-setup-panel");
 		container.setAttribute("role", "tabpanel");
 		container.createEl("h3", { text: "Output" });
-		const folders = this.app.vault
-			.getAllFolders()
-			.map((folder) => folder.path)
-			.filter(Boolean);
+		const folders = session.outputFolderPaths.filter(Boolean);
 		const select = container.createEl("select");
+		select.setAttribute("data-focus-key", "output-destination");
+		select.disabled = session.applyState.status === "applying";
 		select.setAttribute("aria-label", "Output destination");
 		const choices = [
 			{ value: "current-folders", label: "Keep each PDF in its current folder" },
@@ -268,11 +443,7 @@ export class PdfIntakeView extends ItemView {
 		select.addEventListener("change", () => {
 			const output = outputFromValue(select.value);
 			if (!output) return;
-			const currentFolders = this.app.vault
-				.getAllFolders()
-				.map((folder) => folder.path)
-				.filter(Boolean);
-			void this.coordinator.updateOutput(output, currentFolders).then((result) => {
+			void this.coordinator.updateOutput(output).then((result) => {
 				this.statusMessage = result.message;
 				this.render();
 			});
@@ -283,7 +454,7 @@ export class PdfIntakeView extends ItemView {
 		});
 	}
 
-	private renderNaming(container: HTMLElement, session: IntakeSession): void {
+	private renderNaming(container: HTMLElement, session: IntakeSessionSnapshot): void {
 		container.setAttribute("id", "pdf-intake-setup-panel");
 		container.setAttribute("role", "tabpanel");
 		container.createEl("h3", { text: "Metadata & naming" });
@@ -291,16 +462,14 @@ export class PdfIntakeView extends ItemView {
 			text: "Illustrative example",
 			cls: "pdf-intake-muted",
 		});
-		const example = formatFilename(
-			EXAMPLE_RECORD,
-			session.configuration.metadataAndNaming.filenameFormat,
-		);
 		container.createEl("p", {
-			text: `Example filename: ${example.filename ?? "Unavailable"}`,
+			text: `Example filename: ${session.exampleFilename ?? "Unavailable"}`,
 			cls: "pdf-intake-filename-example",
 		});
 		const format = session.configuration.metadataAndNaming.filenameFormat;
 		const editor = container.createEl("input", { type: "text" });
+		editor.setAttribute("data-focus-key", "filename-template");
+		editor.disabled = session.applyState.status === "applying";
 		editor.setAttribute("aria-label", "Custom filename template");
 		const validation = container.createEl("p", { cls: "pdf-intake-validation-message" });
 		if (this.templateDraft === undefined) {
@@ -349,14 +518,56 @@ export class PdfIntakeView extends ItemView {
 		});
 	}
 
-	private outputSummary(session: IntakeSession): string {
+	private outputSummary(session: IntakeSessionSnapshot): string {
 		const output = session.configuration.output;
 		if (output.mode === "current-folders")
 			return "Output: each PDF stays in its current folder";
 		return `Output: ${output.folderPath || "vault root"}`;
 	}
 
-	private namingSummary(session: IntakeSession): string {
+	private focusedActionKey(): string | undefined {
+		if (typeof document !== "undefined" && typeof this.contentEl.contains === "function") {
+			const active = document.activeElement;
+			if (active && this.contentEl.contains(active)) {
+				const key = active.getAttribute("data-focus-key");
+				if (key) return key;
+			}
+			return undefined;
+		}
+		const testRoot = this.contentEl as unknown as {
+			find?: (predicate: (element: FocusableAction) => boolean) => FocusableAction[];
+		};
+		const focused = testRoot.find?.(
+			(element) => element.focused === true && !!element.getAttribute("data-focus-key"),
+		);
+		return focused?.[0]?.getAttribute("data-focus-key") ?? undefined;
+	}
+
+	private restoreActionFocus(key: string | undefined): void {
+		if (!key) return;
+		if (typeof document !== "undefined") {
+			const elements = this.contentEl.querySelectorAll<HTMLElement>("[data-focus-key]");
+			for (const element of Array.from(elements)) {
+				if (element.getAttribute("data-focus-key") === key) {
+					element.focus();
+					return;
+				}
+			}
+			return;
+		}
+		const testRoot = this.contentEl as unknown as {
+			find?: (predicate: (element: FocusableAction) => boolean) => FocusableAction[];
+		};
+		const testMatch = testRoot.find?.(
+			(element) => element.getAttribute("data-focus-key") === key,
+		)[0];
+		if (testMatch?.focus) {
+			testMatch.focus();
+			return;
+		}
+	}
+
+	private namingSummary(session: IntakeSessionSnapshot): string {
 		const format = session.configuration.metadataAndNaming.filenameFormat;
 		return format.kind === "legacy-template"
 			? `Filename: ${format.template}`

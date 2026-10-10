@@ -1,7 +1,7 @@
 # PDF Intake architecture
 
-Status: Slice 1 foundations implemented; the redesigned intake workflow remains incomplete
-Last updated: 2026-10-08
+Status: Slice 3 implemented; repair, draft recovery, and final mobile/accessibility qualification remain incomplete
+Last updated: 2026-10-09
 
 PDF Intake is a small Obsidian plugin for normalizing the bibliographic envelope of existing PDFs.
 
@@ -9,7 +9,7 @@ The target input is a PDF whose document content is already useful/correct but w
 
 The target output is the same document content with a clean, trustworthy bibliographic envelope.
 
-The current implementation provides the session/configuration foundation and an honest empty setup shell. PDF admission, identification, the working surface and enabled Apply interaction are later slices. The [redesign contract and architectural seams](#redesign-contract-and-architectural-seams) record the approved target, and the [overall implementation plan](../.codex/architecture/implementation-plan.md) defines its delivery boundaries.
+The current implementation provides explicit vault-scoped admission, coordinator-owned automatic identification, the stable working surface and reviewed rename-only Apply. Slice 3 results remain transient across plugin reload. The [redesign contract and architectural seams](#redesign-contract-and-architectural-seams) record the approved target, and the [overall implementation plan](../.codex/architecture/implementation-plan.md) defines its delivery boundaries.
 
 ## Product boundary
 
@@ -33,23 +33,23 @@ It does not aim to provide:
 - reference-library management;
 - background watched-folder automation.
 
-## Current Slice 1 system shape
+## Current Slice 3 system shape
 
 ```text
 Open or focus PDF Intake
         ↓
 fresh plugin-owned empty session
         ↓
-PDFs / Output / Metadata & naming setup
+setup: explicit PDFs / Output / Metadata & naming
         ↓
-disabled Add PDFs and Begin review at zero membership
+Begin review → bounded automatic identification
         ↓
-pure rename planner + frozen Apply invocation seams
+membership-ordered Identifying / Needs you / Ready cards
         ↓
-rename-only ApplyChangesService (no enabled UI path yet)
+pure planning → frozen Ready subset → rename-only ApplyChangesService
 ```
 
-The setup shell does not scan folders, admit files or resolve metadata. PDF bytes are read-only, and no mutation is available from the shell.
+The plugin does not scan folders for membership. PDF bytes remain read-only; explicit Apply changes paths only.
 
 ## Main components
 
@@ -70,15 +70,17 @@ Running the command or ribbon action:
 3. load it if Obsidian has deferred the custom view;
 4. create a new leaf only if no PDF Intake view exists.
 
-The plugin owns one session coordinator for its lifetime. A newly opened session copies effective defaults into detached session values and starts with a fresh identity, zero PDFs, setup open and PDFs selected. Closing and reopening the ItemView does not reset the session. Plugin reload creates a new empty runtime session; the opaque draft namespace is retained but not restored in Slice 1.
+The plugin owns one session coordinator for its lifetime. A newly opened session copies effective defaults into detached session values and starts with a fresh identity, zero PDFs, setup open and PDFs selected. Closing and reopening the ItemView does not reset the session. Plugin reload creates a new empty runtime session; Slice 3 membership and identification results are transient and are not restored.
 
-The setup rail always contains PDFs, Output and Metadata & naming. Add PDFs and Begin review are disabled at zero membership; no production or test UI seeds PDFs. Output supports current source folders and a selected existing vault folder, including an explicit vault-root choice. Metadata & naming shows a concrete example and accepts a simple custom template while preserving component-format defaults and exact valid migrated templates.
+The setup rail always contains PDFs, Output and Metadata & naming. Add PDFs opens the explicit vault-scoped chooser. Begin review is disabled at zero membership and automatically begins identification for current admitted PDFs when membership is positive. Edit session returns to the same setup and preserves completed evidence. Output supports current source folders and a selected existing vault folder, including an explicit vault-root choice. Metadata & naming shows a concrete example and accepts a simple custom template while preserving component-format defaults and exact valid migrated templates.
+
+Working cards stay in session membership order while status changes. Identifying, Needs you and Ready counts appear in that order with zero counts omitted. Planner no-change and verified Applied outcomes are neutral. Apply sends the exact current eligible Ready subset through the frozen invocation and rename-only service.
 
 The workflow deliberately avoids a blocking batch modal because intake work may require switching to PDFs, browser research or other Obsidian tabs and then returning.
 
 ### Session and persistence ownership
 
-Session membership is the future source of work. Slice 1 has no membership ingress and no folder-scanning authority.
+Session membership is coordinator-owned and comes only from explicit chooser admission. There is no intake-folder scanning or background membership discovery. Identification state, attempt evidence and Apply outcomes remain in memory for the plugin lifetime; no draft write is made.
 
 Plugin data is schema-versioned and separates settings/defaults, workspace edit policy and an opaque unfinished-session draft namespace. One `PluginDataStore` serializes partial updates against the latest successfully saved envelope. Settings patches preserve the draft; draft patches preserve settings. Failed writes do not publish speculative committed values. Local queue ordering is not a crash-atomic or multi-device guarantee.
 
@@ -88,7 +90,7 @@ Workspace edits copy into defaults only under the committed `future-sessions` po
 
 ### PDF text extraction
 
-The shared resolver's PDF.js 4.10.38 read boundary remains available for later identification, but the Slice 1 shell does not invoke extraction.
+The shared resolver's PDF.js 4.10.38 read boundary runs only when Begin review schedules identification. It reads at most the first three pages and forms ordered segments from PDF.js `TextItem.hasEOL`; it does not OCR or inspect the full document.
 
 The build copies the matching `pdf.worker.mjs` into the plugin directory. On first extraction, PDF Intake reads that asset through the vault adapter, creates a Blob-backed module Worker, and assigns that Worker to the bundled PDF.js instance through `GlobalWorkerOptions.workerPort`. Plugin enable/load does not construct a Worker. The Worker is terminated and its Blob URL revoked when the plugin unloads.
 
@@ -105,7 +107,7 @@ PDF.js is a read/parser dependency here, not the future metadata-write library.
 
 ### Bibliographic resolver
 
-Automatic and manual resolution use the same resolver path when later identification/repair slices connect them. Slice 1 does not start provider work.
+Begin review starts coordinator-owned automatic identification through the shared resolver. The working surface has no ordinary global Resolve action. Manual DOI/ISBN repair remains deferred.
 
 Current supported provider behavior:
 
@@ -120,7 +122,7 @@ Known limitation: some real PDFs visibly contain a DOI that current extraction/d
 
 ### Provider DTO and canonical bibliographic record
 
-The resolver returns a typed bibliographic result that can include:
+The resolver maps Crossref and Open Library into detached provider records that preserve ordered author positions, structured/literal values, unresolved authors, date evidence and ordered ISBNs. Open Library author-detail lookup is sequential and capped at 50 requests per edition while preserving every supplied position. The resolver returns a typed result that can include:
 
 - title;
 - authors;
@@ -130,10 +132,10 @@ The resolver returns a typed bibliographic result that can include:
 - ISBN;
 - journal;
 - publisher;
-- provider/source;
-- resolution status/error.
+- selected provider and route provenance;
+- bounded identifier and provider-attempt evidence.
 
-The current resolver DTO remains provider-shaped and lossy. The new canonical domain type separately preserves ordered structured authors, literal organizations/mononyms, unresolved positions and completeness. Provider ingestion is not upgraded in Slice 1, so automatic identification must not be connected to this canonical type until provider mapping preserves the supplied sequence and uncertainty.
+Successful direct DOI/ISBN results become canonical only when a nonempty provider title exactly matches a bounded normalized PDF title candidate. Query context is search input only. Fallback search requires both query context and title evidence, and fallback provider results use the same exact title-candidate match. Conflicting corroborated works remain Needs you; compatible provider records remain separate and the strongest in-document identifier evidence selects one whole record. Partial provider detail does not independently block Ready; the pure planner owns filename eligibility.
 
 Long-term, both filename projection and embedded-PDF metadata projection should derive from this same resolved bibliographic truth rather than from independent lookup paths.
 
@@ -172,7 +174,7 @@ The Defaults section presents workspace-edit policy first, followed by default O
 
 ### Planning and conflicts
 
-`planRenames()` is pure and accepts explicit items, configuration and a read-only vault snapshot. It returns detached per-item eligible/no-change/blocked results. No current setup action calls it because Slice 1 admits no PDFs.
+`planRenames()` is pure and accepts explicit items, configuration and detached read-only vault paths. It returns detached per-item eligible/no-change/blocked results. SessionCoordinator obtains fresh collision inputs through its PlanningEnvironmentProvider and owns automatic replanning after identification, configuration changes, source revalidation and Apply reconciliation. ItemView does not pass collision arrays or run the planner.
 
 Conflict handling:
 
@@ -186,16 +188,17 @@ The session coordinator builds planning input from its current session configura
 
 ### Processing
 
-`ApplyChangesService` receives an explicit frozen invocation containing fixed source paths, observed size/mtime and reviewed destinations. It validates the complete invocation before writing and rejects a destination that conflicts with another operation's original source, so rename chains cannot depend on input order or intermediate path vacating. It copies only bindings for listed item IDs, validates current source identity/stat and destination state, and performs one `Vault.rename()` per eligible operation. It cannot enumerate session work, consult mutable session configuration, replan or add unsupported metadata/sidecar/cover actions. Only a resolved rename yields a path-only `renamed` outcome. This seam has no enabled UI path in Slice 1. Freshness checks are best-effort and do not promise atomic exclusion, rollback, journaling or crash recovery.
+`ApplyChangesService` receives an explicit frozen invocation containing fixed source paths, observed size/mtime and reviewed destinations. It validates the complete invocation before writing and rejects a destination that conflicts with another operation's original source, so rename chains cannot depend on input order or intermediate path vacating. It copies only bindings for listed item IDs, validates current source identity/stat and destination state, and performs one `Vault.rename()` per eligible operation. It cannot enumerate session work, consult mutable session configuration, replan or add unsupported metadata/sidecar/cover actions. Only a resolved rename yields a path-only `renamed` outcome. SessionCoordinator guards conflicting edits during Apply and advances current source observations only after the exact retained `TFile` is verified at its destination. It then invalidates the consumed plan and replans from fresh path snapshots. Freshness checks are best-effort and do not promise atomic exclusion, rollback, journaling or crash recovery.
 
 ### Current session state
 
 The current session model represents:
 
-- phase (`setup` or future `working`);
+- phase (`setup` or `working`);
 - setup visibility and selected concern;
-- detached configuration and an ordered, currently empty item list;
-- per-item identification, planning and apply-outcome discriminants for later slices.
+- detached configuration and ordered admitted items with immutable admission observation and current trusted source observation;
+- unattempted, identifying, resolved or Needs you state with bounded evidence;
+- coordinator-owned planning snapshots, Apply state and path-only outcomes.
 
 No scanner status or success claim that PDF metadata was written exists. Path-only no-change is excluded from Apply.
 
@@ -209,27 +212,27 @@ The current ribbon action uses the same open/reveal method as the command.
 
 ### Resolution
 
-Resolution is not started from the Slice 1 shell. The resolver remains read-only when later wired.
+Begin review starts coordinator-owned automatic identification through the shared resolver. The working surface has no ordinary global Resolve action.
 
 Manual DOI/ISBN repair is a later slice and will use the shared resolver.
 
-Resolver progress/system feedback should become more informative, but must remain truthful about which provider or fallback is being attempted.
+Manual DOI/ISBN repair and retry remain deferred. Any progress feedback must remain truthful about the current provider or fallback attempt.
 
 ### Mutation
 
-The setup shell has no enabled mutation action. Later mutation remains explicit and reviewed.
+Apply is explicit and reviewed, and is available only for the current eligible Ready subset. It uses the frozen invocation and rename-only ApplyChangesService.
 
-Before a future mutation the reviewed destination is frozen into the invocation and revalidated immediately before the rename.
+The reviewed destination is frozen into the invocation and revalidated immediately before each rename.
 
 Unresolved, error and conflict items remain untouched.
 
 ### Session persistence boundary
 
-The Slice 1 runtime session survives view close/reopen within one plugin lifetime. Complete session-draft serialization/restoration remains a later slice; the opaque draft namespace is not hydrated or cleared by session/default edits.
+The coordinator-owned runtime session survives view close/reopen within one plugin lifetime. Slice 3 membership and identification results are transient across plugin reload. Complete session-draft serialization/restoration remains deferred; the opaque draft namespace is not hydrated or cleared by session/default edits.
 
 ## Redesign contract and architectural seams
 
-These are durable target decisions. Slice 1 implements the session/configuration/persistence/authorship/planning/Apply seams and empty setup shell; later workflow capabilities remain incomplete. Behavioral authority is [Interaction Contract v0.1.2](../.codex/architecture/PDF_Intake_Interaction_Contract_v0.1.2.md), with the human's 2026-10-07 additions recorded here taking precedence where they differ. Visual concepts are design references, not executable specifications.
+These are durable target decisions. Slices 1–3 implement the session/configuration/persistence/authorship/planning/Apply seams, explicit admission, automatic identification and the initial working surface. Repair, draft restoration, and final visual/accessibility qualification remain incomplete. Behavioral authority is [Interaction Contract v0.1.2](../.codex/architecture/PDF_Intake_Interaction_Contract_v0.1.2.md), with the human's 2026-10-07 additions recorded here taking precedence where they differ. Visual concepts are design references, not executable specifications.
 
 ### Reconciled interaction authority
 
@@ -285,20 +288,11 @@ One known author uses their supplied family name; multiple authors use the first
 
 The factory applies only where no valid prior convention exists. Preserve each valid user template string exactly and retain its existing representation choices; do not silently replace it with the new citation-like format. Store an explicit legacy-template versus component-format choice so later builder edits do not masquerade as migration.
 
-### Current provider authorship evidence and delivery dependency
+### Current provider authorship evidence
 
-This audit concerns the actual mappings in `src/lookup.ts`, `src/resolver.ts` and `src/types.ts`; it is not certification of every field the remote providers can return.
+Provider DTOs preserve ordered structured Crossref authors, literal and unresolved positions, publication-date evidence, ordered ISBNs and per-record provenance. Open Library retains every ordered author reference; it requests at most 50 author details per edition and represents failed or over-budget positions as unresolved with bounded incompleteness diagnostics. The network budget does not truncate canonical authorship. Provider candidates remain separate and are not fieldwise merged. Canonical authorship is independent of the derived filename representation.
 
-| Area                | Current observed support / loss                                                                                                                                                                                                                                                                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Public result types | `LookupResult.authors?: string[]`; `BibliographicMetadata.authors: string[]` and `firstAuthor?: string`. No structured person/institution/literal union, source position or completeness.                                                                                                                                                                                   |
-| Crossref            | Reads an ordered `message.author` array with given/family fields, immediately flattens each to given + family or the available field, and filters empty entries. No count cap, but given/family structure is lost and a missing early entry can shift first authorship. No institutional-name path is read by the current parser; unsupported author entries can disappear. |
-| Open Library        | Follows edition author references in their original order, but only `authorRefs.slice(0, 5)`. Takes each author record's `name` string, does not read structured names or explicit institutional classification, and silently skips failed/unusable names. Therefore lists may be truncated/incomplete and later names can shift into first position.                       |
-| Resolver            | Sets `firstAuthor` to the first surviving string, adding no reliable canonical structure or completeness evidence. Existing tests mainly assert ordinary full-name strings; they do not prove lossless authorship.                                                                                                                                                          |
-
-Slice 1 introduces canonical types, a pure authorship derivation boundary, parameterized filename format and truthful synthetic fixtures. Existing provider DTOs remain narrowly identified ingress compatibility data; their strings must not be relabeled complete canonical authorship or reverse-parsed into names. The empty Slice 1 shell performs no real identification.
-
-Before Slice 3 routes real identification into the new session model, provider adapters must preserve available structured names, every ordered reference/position, explicit literals and retrieval failures without the five-author cap. Preserve the whole canonical sequence independently of the chosen filename representation; if a bounded lookup policy is necessary, retain unresolved references and explicit incompleteness rather than deleting authors. Verify actual provider response fields/fixtures before mapping institutional or additional structured fields. This narrow ingestion prerequisite is separate from adding providers or general resolver heuristics.
+DOI/ISBN evidence retains raw text, normalized value where valid, validity, page, offset and nearby-label evidence. ISBN normalization validates checksums. Direct provider results become canonical automatically only after an exact normalized title match against a bounded local title candidate. Uncorroborated records and failed attempts remain evidence; deterministic identifier order, conflict handling and the bounded fallback gate are implemented in the shared resolver. Query context is distinct from identity-bearing title candidates.
 
 ### Vault selection and current-file binding
 
@@ -308,19 +302,19 @@ Addition references an existing PDF, with no copy/import/move or folder scan tha
 
 ### Identification, planning and presentation are distinct
 
-Keep the shared resolver and its PDF.js read boundary. A small session coordinator schedules unresolved work on Begin review and additions to an already working session; reopening setup or focusing the view does not retry failures or restart all successful work. An unsuccessful automatic attempt becomes a local Needs you case, with explicit local retry through the same resolver.
+Keep the shared resolver and its PDF.js read boundary. SessionCoordinator schedules unresolved work on Begin review with a maximum of two unsettled PDF jobs. Editing the session returns to setup; re-entry schedules newly admitted/unattempted work without restarting completed evidence. Manual DOI/ISBN retry remains deferred.
 
 Identification state/evidence, user repairs, plan validity and apply outcome must be distinguishable. A resolved bibliographic record is not automatically an applicable transformation. Missing required naming data, invalid destinations, source invalidation and conflicts are separately explainable blockers; changing Output must not erase successful identification. At the surface, local failures/blockers can appear as Needs you, with shared configuration problems explained in setup/context.
 
 Ready means a current, valid preview with changes supported by the current implementation, not merely a provider response. Ready counts and Apply scope derive from the same plans. A filename/path no-op is not a normalization success or a Ready mutation; later metadata/sidecar changes must be considered independently. Applied outcomes are shown truthfully and excluded from another Apply; unresolved objects remain available. Exact completion/new-session UX remains a slice-level design question.
 
-The coordinator owns asynchronous results independently of the DOM. Removed/replaced session items and superseded repair attempts cannot receive late results. Configuration changes invalidate affected previews; source changes invalidate evidence dependent on the old source. Render updates must preserve focus/input and stable card positions. A bounded identification queue may initially be serial; it must not lock unrelated repair and already Ready work for the duration of every provider call.
+The coordinator owns asynchronous results independently of the DOM. Removed/replaced session items, changed sources and superseded attempts cannot receive late results. Slice 3 uses a bounded queue of two unsettled PDF jobs; configuration changes replan retained evidence without repeating provider work. Render updates preserve stable membership order and focus while statuses change.
 
-The planner derives previews from session configuration and the effective bibliographic record, checks vault destinations and collisions across the working set, and stays independent of file writes. Applying a reviewed set freezes that invocation's scope so new asynchronous results do not join it silently. If a relevant plan changes after preview, it must be shown again rather than applied under an obsolete preview.
+The planner derives previews from session configuration and the effective bibliographic record, checks vault destinations and collisions through a coordinator-injected read-only PlanningEnvironmentProvider, and stays independent of file writes. Applying a reviewed set freezes that invocation's scope so new asynchronous results do not join it silently. If a relevant plan changes after preview, it must be shown again rather than applied under an obsolete preview.
 
 ### One consequential mutation boundary
 
-**ApplyChangesService** is the domain boundary for all final PDF path/binary and optional artifact writes. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. Slice 1 has extracted the rename-only service; the old `processEntry()` and ItemView-owned batch orchestration have been removed. The shell exposes no Apply action until later slices add membership and review.
+**ApplyChangesService** is the domain boundary for all final PDF path/binary and optional artifact writes. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. Slice 1 extracted the rename-only service; Slice 3 activates it for the frozen Ready subset. The old `processEntry()` and ItemView-owned batch orchestration have been removed.
 
 Mutable session state feeds pure planning, which produces the reviewed **frozen Apply invocation plan** consumed by the service. That snapshot explicitly lists every operation's source, reviewed destination and relevant observed source/configuration context. It contains detached values rather than live session-entry/settings references; host `TFile` bindings are kept separate and must not be frozen. The service receives this explicit scope and returns per-PDF outcomes for the coordinator to record. It never discovers additional session entries, replans against live session configuration or repeatedly reads mutable UI/session scope during execution.
 

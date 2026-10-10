@@ -23,7 +23,14 @@ function record(
 	authorship: CanonicalAuthorship,
 	overrides: Partial<CanonicalBibliographicRecord> = {},
 ): CanonicalBibliographicRecord {
-	return { title: "Example Title", year: 2023, authorship, ...overrides };
+	return {
+		title: "Example Title",
+		year: 2023,
+		authorship,
+		isbns: [],
+		provenance: { provider: "crossref", route: "doi", identifier: "10.1234/test" },
+		...overrides,
+	};
 }
 
 describe("canonical authorship and filename representations", () => {

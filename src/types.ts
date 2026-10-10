@@ -1,19 +1,19 @@
 export type LookupSource = "crossref" | "openlibrary";
-export type ResolutionStatus = "resolved" | "unresolved" | "error";
+export type LookupRoute = "doi" | "isbn" | "bibliographic-query" | "openlibrary-search";
 
-/** Provider-shaped values remain at the read/lookup boundary until Slice 3 lossless ingestion. */
-export interface BibliographicMetadata {
-	title?: string;
-	authors: string[];
-	firstAuthor?: string;
-	year?: number;
-	doi?: string;
-	isbn?: string;
-	journal?: string;
-	publisher?: string;
-	source?: LookupSource;
-	status: ResolutionStatus;
-	error?: string;
+export type PublicationDateEvidence =
+	| {
+			provider: "crossref";
+			source: "published" | "published-print" | "published-online" | "issued";
+			dateParts: readonly number[];
+	  }
+	| { provider: "openlibrary"; source: "publish-date"; text: string };
+
+export interface SelectedRecordProvenance {
+	provider: LookupSource;
+	route: LookupRoute;
+	identifier?: string;
+	query?: string;
 }
 
 export type CanonicalAuthor =
@@ -33,10 +33,51 @@ export interface CanonicalBibliographicRecord {
 	title?: string;
 	authorship: CanonicalAuthorship;
 	year?: number;
+	publicationDate?: PublicationDateEvidence;
 	doi?: string;
-	isbn?: string;
+	isbns: readonly string[];
 	journal?: string;
 	publisher?: string;
+	provenance: SelectedRecordProvenance;
+}
+
+/** Provider-mapped values before the resolver selects one whole record as canonical. */
+export type ProviderBibliographicRecord = Omit<CanonicalBibliographicRecord, "provenance"> & {
+	provider: LookupSource;
+	diagnostics: readonly string[];
+};
+
+export interface IdentifierCandidateEvidence {
+	type: "doi" | "isbn";
+	rawText: string;
+	normalizedValue?: string;
+	valid: boolean;
+	pageNumber: number;
+	textOffset: number;
+	labeled: boolean;
+}
+
+export type ProviderAttemptOutcome =
+	"no-record" | "request-failed" | "title-mismatch" | "corroborated" | "ambiguous";
+
+export interface ProviderAttemptEvidence {
+	provider: LookupSource;
+	route: LookupRoute;
+	lookupValue: string;
+	outcome: ProviderAttemptOutcome;
+	providerTitle?: string;
+	matchedTitleCandidate?: string;
+	score?: number;
+	diagnostics?: readonly string[];
+	candidateRecord?: ProviderBibliographicRecord;
+}
+
+export interface IdentificationEvidence {
+	identifiers: readonly IdentifierCandidateEvidence[];
+	attempts: readonly ProviderAttemptEvidence[];
+	titleCandidates: readonly string[];
+	queryContext?: string;
+	diagnostics: readonly string[];
 }
 
 export interface AuthorshipPresentation {

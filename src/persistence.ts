@@ -6,7 +6,7 @@ import type {
 	SessionConfiguration,
 	WorkspaceEditPolicy,
 } from "./types";
-import { isUsableLegacyTemplate } from "./planning";
+import { isUsableLegacyTemplate } from "./filename-template";
 
 export type JsonValue =
 	null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };

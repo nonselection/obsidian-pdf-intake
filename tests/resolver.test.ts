@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { IdentificationLookups } from "../src/resolver";
-import { localEvidenceFromPdfText, resolveIdentificationEvidence } from "../src/resolver";
+import {
+	localEvidenceFromPdfText,
+	lookupManualIdentifier,
+	manualTitleConflict,
+	resolveIdentificationEvidence,
+} from "../src/resolver";
 import type { ProviderBibliographicRecord } from "../src/types";
 
 function record(
@@ -827,5 +832,66 @@ describe("identifier-first title corroboration", () => {
 			expect(result.record.authorship.completeness).toBe("unknown");
 			expect(result.evidence.attempts[0]?.diagnostics).toEqual(["authors-incomplete"]);
 		}
+	});
+});
+
+describe("direct manual identifier lookup", () => {
+	it("normalizes a DOI and returns one unconfirmed whole candidate without fallback", async () => {
+		const providers = lookups();
+		vi.mocked(providers.lookupDoi).mockResolvedValue({
+			status: "record",
+			record: record("crossref", "Provider Work Title", { doi: "10.1234/manual" }),
+		});
+		const result = await lookupManualIdentifier(
+			"doi",
+			"doi: https://doi.org/10.1234/manual.",
+			providers,
+		);
+		expect(result).toMatchObject({
+			status: "candidate",
+			candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/manual" },
+			record: {
+				title: "Provider Work Title",
+				provenance: { provider: "crossref", route: "doi" },
+			},
+		});
+		expect(providers.lookupDoi).toHaveBeenCalledTimes(1);
+		expect(providers.lookupIsbn).not.toHaveBeenCalled();
+		expect(providers.searchCrossref).not.toHaveBeenCalled();
+		expect(providers.searchOpenLibrary).not.toHaveBeenCalled();
+	});
+
+	it("normalizes ISBN checksums and preserves no-record versus request-failed", async () => {
+		const providers = lookups();
+		const noRecord = await lookupManualIdentifier("isbn", "ISBN-10: 0-306-40615-2", providers);
+		expect(noRecord).toMatchObject({
+			status: "no-record",
+			candidate: { provider: "openlibrary", route: "isbn", lookupValue: "0306406152" },
+		});
+		vi.mocked(providers.lookupIsbn).mockResolvedValue({ status: "request-failed" });
+		await expect(
+			lookupManualIdentifier("isbn", "978-0-306-40615-7", providers),
+		).resolves.toMatchObject({
+			status: "request-failed",
+			candidate: { lookupValue: "9780306406157" },
+		});
+		expect(providers.lookupIsbn).toHaveBeenCalledTimes(2);
+	});
+
+	it("rejects invalid identifiers locally and identifies title conflicts for deliberate confirmation", async () => {
+		const providers = lookups();
+		expect(await lookupManualIdentifier("doi", "not a doi", providers)).toEqual({
+			status: "invalid",
+		});
+		expect(await lookupManualIdentifier("isbn", "9780306406158", providers)).toEqual({
+			status: "invalid",
+		});
+		expect(providers.lookupDoi).not.toHaveBeenCalled();
+		expect(providers.lookupIsbn).not.toHaveBeenCalled();
+		expect(manualTitleConflict("Different Provider Title", ["PDF Work Title"])).toBe(
+			"PDF Work Title",
+		);
+		expect(manualTitleConflict("pdf work title!", ["PDF Work Title"])).toBeUndefined();
+		expect(manualTitleConflict("Provider Title", [])).toBeUndefined();
 	});
 });

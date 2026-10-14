@@ -96,6 +96,102 @@
 	border-radius: var(--radius-m);
 }
 
+.pdf-intake-lifecycle-controls,
+.pdf-intake-inspector-heading {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.pdf-intake-lifecycle-controls {
+	margin-top: var(--size-4-2);
+}
+
+.pdf-intake-recovery-gate,
+.pdf-intake-inspector {
+	box-sizing: border-box;
+	min-width: 0;
+	width: 100%;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.pdf-intake-inspector {
+	margin-block: var(--size-4-3);
+}
+
+.pdf-intake-inspector-heading {
+	justify-content: space-between;
+}
+
+.pdf-intake-inspector-heading h3,
+.pdf-intake-inspector-evidence h4,
+.pdf-intake-inspector-record h4,
+.pdf-intake-manual-lookup h4,
+.pdf-intake-manual-record-form h4,
+.pdf-intake-authorship-editor h4 {
+	margin-block: var(--size-4-2);
+}
+
+.pdf-intake-inspector-path,
+.pdf-intake-evidence-attempt,
+.pdf-intake-inspector-evidence,
+.pdf-intake-inspector-record,
+.pdf-intake-manual-lookup,
+.pdf-intake-manual-record-form,
+.pdf-intake-authorship-editor,
+.pdf-intake-dirty-decision {
+	margin-block: var(--size-4-3);
+	padding-top: var(--size-4-2);
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.pdf-intake-form-field {
+	display: grid;
+	gap: var(--size-2-1);
+	margin-block: var(--size-4-2);
+}
+
+.pdf-intake-form-field input,
+.pdf-intake-form-field textarea,
+.pdf-intake-author-row input,
+.pdf-intake-inspector select,
+.pdf-intake-manual-lookup input {
+	box-sizing: border-box;
+	width: min(100%, 34rem);
+	min-width: 0;
+}
+
+.pdf-intake-form-field textarea {
+	min-height: 5rem;
+	resize: vertical;
+}
+
+.pdf-intake-author-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+	margin-block: var(--size-4-2);
+	padding-block: var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pdf-intake-inspector button:focus-visible,
+.pdf-intake-inspector input:focus-visible,
+.pdf-intake-inspector textarea:focus-visible,
+.pdf-intake-inspector select:focus-visible,
+.pdf-intake-lifecycle-controls button:focus-visible,
+.pdf-intake-recovery-gate button:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
 .pdf-intake-card-source,
 .pdf-intake-card-state,
 .pdf-intake-card-title,

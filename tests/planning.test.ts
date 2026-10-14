@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	createApplyInvocation,
-	isUsableLegacyTemplate,
 	normalizePathConflictKey,
 	planRenames,
 	type PlanningInput,
 	type PlanningItem,
 } from "../src/planning";
+import { isUsableLegacyTemplate } from "../src/filename-template";
 import {
 	createFactoryConfiguration,
 	type CanonicalBibliographicRecord,

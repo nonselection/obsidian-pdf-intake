@@ -16,6 +16,31 @@ export interface SelectedRecordProvenance {
 	query?: string;
 }
 
+export interface CandidateReference {
+	provider: LookupSource;
+	route: LookupRoute;
+	lookupValue: string;
+}
+
+export interface PersistedApplySummary {
+	status: "renamed" | "blocked" | "failed";
+	sourcePath?: string;
+	destinationPath?: string;
+	reason?:
+		| "missing-binding"
+		| "source-changed"
+		| "source-unavailable"
+		| "invalid-destination"
+		| "destination-conflict";
+}
+
+export interface UserEditedRecordProvenance {
+	kind: "user-edited";
+	basedOn?: CandidateReference;
+}
+
+export type RecordProvenance = SelectedRecordProvenance | UserEditedRecordProvenance;
+
 export type CanonicalAuthor =
 	| { kind: "person"; given?: string; family?: string; literal?: string }
 	| { kind: "organization"; literal: string }
@@ -38,7 +63,60 @@ export interface CanonicalBibliographicRecord {
 	isbns: readonly string[];
 	journal?: string;
 	publisher?: string;
-	provenance: SelectedRecordProvenance;
+	provenance: RecordProvenance;
+}
+
+/** A deliberate whole-record user authority decision; machine evidence remains separate. */
+export type UserRecordDecision =
+	| {
+			kind: "selected-candidate";
+			record: CanonicalBibliographicRecord;
+			candidate: CandidateReference;
+	  }
+	| {
+			kind: "user-edited-record";
+			record: CanonicalBibliographicRecord;
+			basedOn?: CandidateReference;
+	  };
+
+export interface RepairEvidence {
+	type: "doi" | "isbn";
+	identifier: string;
+	provider: LookupSource;
+	route: LookupRoute;
+	outcome: "candidate" | "no-record" | "request-failed";
+	candidateRecord?: CanonicalBibliographicRecord;
+	conflictingTitle?: string;
+	decision?: "accepted" | "rejected";
+}
+
+export interface IdentificationRunSummary {
+	status: "accepted" | "needs-you";
+	reason?: string;
+	titleCandidates?: readonly string[];
+	attempts: readonly {
+		provider: LookupSource;
+		route: LookupRoute;
+		lookupValue: string;
+		outcome: ProviderAttemptOutcome;
+		providerTitle?: string;
+	}[];
+}
+
+export interface PendingInspectorForm {
+	itemId: string;
+	unsaved: true;
+	values: {
+		title: string;
+		year: string;
+		doi: string;
+		isbns: string[];
+		journal: string;
+		publisher: string;
+		authors: CanonicalAuthor[];
+		authorshipCompleteness: CanonicalAuthorship["completeness"];
+		totalCountKnown: boolean;
+	};
 }
 
 /** Provider-mapped values before the resolver selects one whole record as canonical. */

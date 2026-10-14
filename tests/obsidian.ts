@@ -91,6 +91,10 @@ export class TestElement {
 		this.handlers.set(name, [...(this.handlers.get(name) ?? []), callback]);
 	}
 
+	removeEventListener(name: string, _handler: EventListenerOrEventListenerObject): void {
+		this.handlers.delete(name);
+	}
+
 	trigger(name: string, properties: Record<string, unknown> = {}): void {
 		const event = {
 			target: this,

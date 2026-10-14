@@ -5,6 +5,9 @@ import type { PdfIntakeView } from "../src/view";
 import type { IdentificationResult } from "../src/resolver";
 import type { IdentificationRunContext } from "../src/session";
 import type { ApplyInvocationResult } from "../src/apply-changes";
+import { createFreshSession } from "../src/session";
+import { createFactoryConfiguration } from "../src/types";
+import { encodeSessionDraft } from "../src/session-draft";
 
 type TestView = PdfIntakeView & { contentEl: TestElement };
 type TestPlugin = PdfIntakePlugin & {
@@ -108,6 +111,29 @@ function acceptedRecord(title: string): IdentificationResult {
 	};
 }
 
+function needsYouResult(title = "PDF title evidence"): IdentificationResult {
+	return {
+		status: "needs-you",
+		reason: "No provider result matched the PDF evidence.",
+		evidence: {
+			identifiers: [
+				{
+					type: "doi",
+					rawText: "https://doi.org/10.1234/example",
+					normalizedValue: "10.1234/example",
+					valid: true,
+					pageNumber: 1,
+					textOffset: 12,
+					labeled: true,
+				},
+			],
+			attempts: [],
+			titleCandidates: [title],
+			diagnostics: ["provider-no-record"],
+		},
+	};
+}
+
 async function tick(): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -190,6 +216,7 @@ describe("PDF Intake setup shell", () => {
 			const second = addFile("Other/shared.pdf");
 			const sessionId = plugin.coordinator.getSnapshot().id;
 			plugin.coordinator.addPdfs([first.path, second.path], sessionId);
+			await tick();
 			const text = textOf(view.contentEl);
 			expect(text).toContain("2 PDFs");
 			expect(
@@ -237,10 +264,13 @@ describe("PDF Intake setup shell", () => {
 			expect(textOf(view.contentEl)).toContain("Source changed");
 			expect(vault.getAbstractFileByPath("Folder/shared.pdf")).toBe(first);
 			expect(vault.getAbstractFileByPath("Other/shared.pdf")).toBe(second);
-			expect(plugin.store.getDraftNamespace()).toBeNull();
-			expect((plugin as unknown as { testSavedData: unknown[] }).testSavedData).toHaveLength(
-				savesBeforeMembership,
-			);
+			expect(plugin.store.getDraftNamespace()).toMatchObject({
+				draftVersion: 1,
+				items: [{ sourceObservation: { path: "Other/shared.pdf" } }],
+			});
+			expect(
+				(plugin as unknown as { testSavedData: unknown[] }).testSavedData.length,
+			).toBeGreaterThan(savesBeforeMembership);
 			expect(vault.readBinary).not.toHaveBeenCalled();
 			expect(vault.adapter.read).not.toHaveBeenCalled();
 			expect(vault.rename).not.toHaveBeenCalled();
@@ -252,9 +282,8 @@ describe("PDF Intake setup shell", () => {
 			expect(vault.trash).not.toHaveBeenCalled();
 			expect(workerConstructor).not.toHaveBeenCalled();
 			expect(requestUrl).not.toHaveBeenCalled();
-			expect((plugin as unknown as { testSavedData: unknown[] }).testSavedData).toHaveLength(
-				savesBeforeMembership,
-			);
+			await tick();
+			expect(plugin.store.getDraftNamespace()).not.toBeNull();
 			const addMore = view.contentEl.find(
 				(element) =>
 					element.tagName === "button" && element.textContent === "Add more PDFs",
@@ -276,6 +305,8 @@ describe("PDF Intake setup shell", () => {
 			remainingRemove?.trigger("click");
 			expect(plugin.coordinator.getSnapshot().items).toEqual([]);
 			expect(plugin.coordinator.getSnapshot().revision).toBe(4);
+			await tick();
+			expect(plugin.store.getDraftNamespace()).toMatchObject({ draftVersion: 1, items: [] });
 			expect(textOf(view.contentEl)).toContain("No PDFs in this session yet.");
 			expect(plugin.coordinator.beginReview()).toEqual({
 				allowed: false,
@@ -298,7 +329,7 @@ describe("PDF Intake setup shell", () => {
 				element.tagName === "button" &&
 				element.getAttribute("aria-label") === "Remove stale-action.pdf from vault root",
 		)[0];
-		plugin.coordinator.createNewSession();
+		await plugin.coordinator.startNewSession(true);
 		const currentSession = plugin.coordinator.getSnapshot();
 		staleRemove?.trigger("click");
 		expect(plugin.coordinator.getSnapshot()).toMatchObject({
@@ -467,7 +498,7 @@ describe("PDF Intake setup shell", () => {
 		);
 		expect(textOf(view.contentEl)).not.toContain("Add more PDFs");
 		expect(textOf(view.contentEl)).not.toContain("Resolve");
-		expect(textOf(view.contentEl)).not.toContain("Inspect");
+		expect(textOf(view.contentEl)).toContain("Inspect");
 
 		view.contentEl
 			.find(
@@ -578,5 +609,434 @@ describe("PDF Intake setup shell", () => {
 			await view.onClose();
 			plugin.onunload();
 		}
+	});
+
+	it("opens a bounded Needs you inspector and returns focus after Escape", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const source = addFile("Inbox/evidence.pdf");
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn(() => Promise.resolve(needsYouResult())),
+		});
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([source.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.identification.status).toBe(
+				"needs-user",
+			),
+		);
+		const inspectKey = `inspect-${admission.addedItemIds[0]}`;
+		const inspect = view.contentEl.find(
+			(element) => element.getAttribute("data-focus-key") === inspectKey,
+		)[0];
+		inspect.focus();
+		inspect.trigger("click");
+		const inspector = view.contentEl.find((element) =>
+			element.className.includes("pdf-intake-inspector"),
+		)[0];
+		expect(inspector).toBeTruthy();
+		expect(textOf(inspector)).toContain("Inbox/evidence.pdf");
+		expect(textOf(inspector)).toContain("PDF title evidence");
+		expect(textOf(inspector)).toContain("10.1234/example");
+		view.contentEl.trigger("keydown", { key: "Escape", isComposing: false });
+		expect(
+			view.contentEl.find((element) => element.className.includes("pdf-intake-inspector")),
+		).toEqual([]);
+		expect(
+			view.contentEl.find(
+				(element) => element.getAttribute("data-focus-key") === inspectKey,
+			)[0]?.focused,
+		).toBe(true);
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("keeps queued and running Identifying inspectors read-only", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const pending = deferredIdentification();
+		const manual = vi.fn(() =>
+			Promise.resolve({
+				status: "no-record" as const,
+				candidate: {
+					provider: "crossref" as const,
+					route: "doi" as const,
+					lookupValue: "10.1234/example",
+				},
+			}),
+		);
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn(() => pending.promise),
+			manualIdentifierLookupRunner: manual,
+		});
+		const source = addFile("Inbox/identifying.pdf");
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([source.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.currentStatus).toBe("identifying"),
+		);
+		view.contentEl
+			.find(
+				(element) =>
+					element.getAttribute("data-focus-key") ===
+					`inspect-${admission.addedItemIds[0]}`,
+			)[0]
+			?.trigger("click");
+		expect(textOf(view.contentEl)).toContain("Identification is still running");
+		expect(
+			view.contentEl.find((element) => element.textContent === "Edit bibliographic record"),
+		).toHaveLength(0);
+		const itemId = admission.addedItemIds[0];
+		if (!itemId) throw new Error("Expected admitted item");
+		expect(plugin.coordinator.retryIdentification(itemId, sessionId).started).toBe(false);
+		expect(
+			await plugin.coordinator.lookupManualIdentifier(
+				itemId,
+				"doi",
+				"10.1234/example",
+				sessionId,
+			),
+		).toMatchObject({ status: "rejected" });
+		expect(
+			plugin.coordinator.saveManualRecord(
+				itemId,
+				{
+					authorship: {
+						authors: [],
+						completeness: "unknown",
+						totalCountKnown: false,
+					},
+					isbns: [],
+				},
+				sessionId,
+			),
+		).toMatchObject({ saved: false });
+		expect(manual).not.toHaveBeenCalled();
+		await view.onClose();
+		plugin.onunload();
+		pending.resolve(needsYouResult());
+		await tick();
+	});
+
+	it("requires Save, Discard, or Stay before switching a dirty inspector", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const first = addFile("Inbox/first.pdf");
+		const second = addFile("Inbox/second.pdf");
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn((file: TFile) =>
+				Promise.resolve(needsYouResult(file.basename)),
+			),
+		});
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([first.path, second.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(
+				plugin.coordinator
+					.getSnapshot()
+					.items.every((item) => item.identification.status === "needs-user"),
+			).toBe(true),
+		);
+		const firstInspectKey = `inspect-${admission.addedItemIds[0]}`;
+		const secondInspectKey = `inspect-${admission.addedItemIds[1]}`;
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === firstInspectKey)[0]
+			?.trigger("click");
+		view.contentEl
+			.find((element) => element.textContent === "Edit bibliographic record")[0]
+			?.trigger("click");
+		const title = view.contentEl.find(
+			(element) => element.getAttribute("aria-label") === "Title",
+		)[0];
+		title.value = "Unsaved first title";
+		title.trigger("input");
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === secondInspectKey)[0]
+			?.trigger("click");
+		expect(textOf(view.contentEl)).toContain("Save, discard, or stay here");
+		view.contentEl.find((element) => element.textContent === "Stay")[0]?.trigger("click");
+		expect(
+			view.contentEl.find(
+				(element) =>
+					element.getAttribute("data-inspector-item") === admission.addedItemIds[0],
+			),
+		).toHaveLength(1);
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === secondInspectKey)[0]
+			?.trigger("click");
+		view.contentEl.find((element) => element.textContent === "Discard")[0]?.trigger("click");
+		expect(
+			view.contentEl.find(
+				(element) =>
+					element.getAttribute("data-inspector-item") === admission.addedItemIds[1],
+			),
+		).toHaveLength(1);
+		view.contentEl
+			.find((element) => element.textContent === "Edit bibliographic record")[0]
+			?.trigger("click");
+		const secondTitle = view.contentEl.find(
+			(element) => element.getAttribute("aria-label") === "Title",
+		)[0];
+		secondTitle.value = "Saved second title";
+		secondTitle.trigger("input");
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === firstInspectKey)[0]
+			?.trigger("click");
+		view.contentEl.find((element) => element.textContent === "Save")[0]?.trigger("click");
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[1]?.recordDecision?.kind).toBe(
+				"user-edited-record",
+			),
+		);
+		expect(plugin.coordinator.getSnapshot().items[1]?.effectiveRecord?.title).toBe(
+			"Saved second title",
+		);
+		expect(
+			view.contentEl.find(
+				(element) =>
+					element.getAttribute("data-inspector-item") === admission.addedItemIds[0],
+			),
+		).toHaveLength(1);
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("preserves one unsaved pending form on view close without changing planner input", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const source = addFile("Inbox/ready.pdf");
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn(() =>
+				Promise.resolve(acceptedRecord("Original machine title")),
+			),
+		});
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([source.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.currentStatus).toBe("ready"),
+		);
+		const initialItem = plugin.coordinator.getSnapshot().items[0];
+		const oldProposal =
+			initialItem?.plan?.status === "eligible"
+				? initialItem.plan.proposedRename.proposedName
+				: undefined;
+		view.contentEl
+			.find(
+				(element) =>
+					element.getAttribute("data-focus-key") ===
+					`inspect-${admission.addedItemIds[0]}`,
+			)[0]
+			?.trigger("click");
+		view.contentEl
+			.find((element) => element.textContent === "Edit bibliographic record")[0]
+			?.trigger("click");
+		const title = view.contentEl.find(
+			(element) => element.getAttribute("aria-label") === "Title",
+		)[0];
+		title.value = "Unsaved user title";
+		title.trigger("input");
+		await view.onClose();
+		const afterClose = plugin.coordinator.getSnapshot();
+		expect(afterClose.pendingInspectorForm).toMatchObject({
+			unsaved: true,
+			values: { title: "Unsaved user title" },
+		});
+		expect(afterClose.items[0]?.effectiveRecord?.title).toBe("Original machine title");
+		expect(
+			afterClose.items[0]?.plan?.status === "eligible"
+				? afterClose.items[0].plan.proposedRename.proposedName
+				: undefined,
+		).toBe(oldProposal);
+		await tick();
+		expect(plugin.store.getDraftNamespace()).toMatchObject({
+			pendingInspectorForm: { unsaved: true, values: { title: "Unsaved user title" } },
+		});
+		await view.onOpen();
+		view.contentEl
+			.find(
+				(element) =>
+					element.getAttribute("data-focus-key") ===
+					`inspect-${admission.addedItemIds[0]}`,
+			)[0]
+			?.trigger("click");
+		expect(textOf(view.contentEl)).toContain("Edit record · Unsaved");
+		expect(
+			view.contentEl.find((element) => element.getAttribute("aria-label") === "Title")[0]
+				?.value,
+		).toBe("Unsaved user title");
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("requires Save, Discard, or Stay before closing a dirty inspector", async () => {
+		const { plugin, view, addFile } = await createShell();
+		const source = addFile("Inbox/close-dirty.pdf");
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn(() => Promise.resolve(needsYouResult())),
+		});
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([source.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.currentStatus).toBe("needs-you"),
+		);
+		const inspectKey = `inspect-${admission.addedItemIds[0]}`;
+		view.contentEl
+			.find((element) => element.getAttribute("data-focus-key") === inspectKey)[0]
+			?.trigger("click");
+		view.contentEl
+			.find((element) => element.textContent === "Edit bibliographic record")[0]
+			?.trigger("click");
+		const title = view.contentEl.find(
+			(element) => element.getAttribute("aria-label") === "Title",
+		)[0];
+		title.value = "Saved while closing";
+		title.trigger("input");
+		view.contentEl.trigger("keydown", { key: "Escape", isComposing: false });
+		expect(textOf(view.contentEl)).toContain("Save, discard, or stay here");
+		view.contentEl.find((element) => element.textContent === "Stay")[0]?.trigger("click");
+		expect(view.contentEl.find((element) => element.textContent === "Save")).toHaveLength(0);
+		view.contentEl.trigger("keydown", { key: "Escape", isComposing: false });
+		view.contentEl.find((element) => element.textContent === "Save")[0]?.trigger("click");
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.recordDecision?.kind).toBe(
+				"user-edited-record",
+			),
+		);
+		expect(
+			view.contentEl.find((element) => !!element.getAttribute("data-inspector-item")),
+		).toHaveLength(0);
+		expect(
+			view.contentEl.find(
+				(element) => element.getAttribute("data-focus-key") === inspectKey,
+			)[0]?.focused,
+		).toBe(true);
+		expect(plugin.coordinator.getSnapshot().items[0]?.effectiveRecord?.title).toBe(
+			"Saved while closing",
+		);
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("renders a recovery decision gate before showing ordinary setup controls", async () => {
+		const saved = createFreshSession(createFactoryConfiguration(), "old-runtime-session");
+		const draft = encodeSessionDraft(saved, "recovery-draft-id");
+		const raw = {
+			schemaVersion: 1,
+			settings: {
+				workspaceEditPolicy: "future-sessions",
+				defaults: createFactoryConfiguration(),
+			},
+			unfinishedSessionDraft: draft,
+		};
+		const { plugin, view } = await createShell(raw);
+		expect(plugin.coordinator.getSnapshot().recoveryGate).toBe("supported");
+		expect(textOf(view.contentEl)).toContain("Resume unfinished session");
+		expect(view.contentEl.find((element) => element.textContent === "Add PDFs")).toEqual([]);
+		expect(view.contentEl.find((element) => element.textContent === "Begin review")).toEqual(
+			[],
+		);
+		view.contentEl
+			.find((element) => element.textContent === "Resume unfinished session")[0]
+			?.trigger("click");
+		await vi.waitFor(() => expect(plugin.coordinator.getSnapshot().recoveryGate).toBe("none"));
+		expect(plugin.coordinator.getSnapshot().id).not.toBe("old-runtime-session");
+		expect(textOf(view.contentEl)).toContain("No PDFs in this session yet.");
+		await view.onClose();
+		plugin.onunload();
+	});
+
+	it("uses generic Settings copy for any saved session draft", async () => {
+		const saved = createFreshSession(createFactoryConfiguration(), "old-runtime-session");
+		const supportedDraft = encodeSessionDraft(saved, "recovery-draft-id");
+		const savedSettings = {
+			workspaceEditPolicy: "future-sessions",
+			defaults: createFactoryConfiguration(),
+		};
+		for (const unfinishedSessionDraft of [supportedDraft, { draftVersion: 99 }]) {
+			const { plugin } = await createShell({
+				schemaVersion: 1,
+				settings: savedSettings,
+				unfinishedSessionDraft,
+			});
+			const tab = plugin.settingTabs[0] as {
+				display: () => void;
+				containerEl: TestElement;
+			};
+			tab.display();
+			const settingsText = textOf(tab.containerEl);
+			expect(settingsText).toContain(
+				"Saved PDF Intake session data needs a decision in PDF Intake.",
+			);
+			expect(settingsText.toLowerCase()).not.toMatch(/resum(e|able)/);
+			plugin.onunload();
+		}
+	});
+
+	it("runs one direct DOI lookup after local validation and requires confirmation for a title conflict", async () => {
+		requestUrl.mockClear();
+		requestUrl.mockResolvedValueOnce({
+			status: 200,
+			json: {
+				message: {
+					DOI: "10.1234/manual",
+					title: ["A different provider title"],
+					author: [{ given: "Grace", family: "Hopper" }],
+					published: { "date-parts": [[2022]] },
+					"container-title": ["Example Journal"],
+					publisher: "Example Press",
+				},
+			},
+		});
+		const { plugin, view, addFile, vault } = await createShell();
+		const source = addFile("Inbox/manual.pdf");
+		Object.assign(plugin.coordinator, {
+			identificationRunner: vi.fn(() => Promise.resolve(needsYouResult())),
+		});
+		const sessionId = plugin.coordinator.getSnapshot().id;
+		const admission = plugin.coordinator.addPdfs([source.path], sessionId);
+		plugin.coordinator.beginReview();
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.identification.status).toBe(
+				"needs-user",
+			),
+		);
+		view.contentEl
+			.find(
+				(element) =>
+					element.getAttribute("data-focus-key") ===
+					`inspect-${admission.addedItemIds[0]}`,
+			)[0]
+			?.trigger("click");
+		const identifier = view.contentEl.find(
+			(element) => element.getAttribute("aria-label") === "DOI",
+		)[0];
+		identifier.value = "not a DOI";
+		identifier.trigger("input");
+		view.contentEl.find((element) => element.textContent === "Look up")[0]?.trigger("click");
+		await vi.waitFor(() => expect(textOf(view.contentEl)).toContain("Enter a valid DOI."));
+		expect(requestUrl).not.toHaveBeenCalled();
+		identifier.value = "https://doi.org/10.1234/manual.";
+		identifier.trigger("input");
+		view.contentEl.find((element) => element.textContent === "Look up")[0]?.trigger("click");
+		await vi.waitFor(() =>
+			expect(plugin.coordinator.getSnapshot().items[0]?.repairEvidence?.length).toBe(1),
+		);
+		expect(requestUrl).toHaveBeenCalledTimes(1);
+		expect(vault.readBinary).not.toHaveBeenCalled();
+		expect(textOf(view.contentEl)).toContain("This title differs from the PDF title evidence");
+		view.contentEl
+			.find((element) => element.textContent === "Review title difference")[0]
+			?.trigger("click");
+		expect(view.contentEl.find((element) => element.textContent === "Use anyway")).toHaveLength(
+			1,
+		);
+		view.contentEl.find((element) => element.textContent === "Use anyway")[0]?.trigger("click");
+		expect(plugin.coordinator.getSnapshot().items[0]).toMatchObject({
+			recordAuthority: "user-selected",
+			effectiveRecord: { title: "A different provider title" },
+		});
+		await view.onClose();
+		plugin.onunload();
 	});
 });

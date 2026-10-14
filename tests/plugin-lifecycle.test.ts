@@ -59,6 +59,7 @@ function makeHost() {
 			return leaf;
 		}),
 		revealLeaf: vi.fn(() => Promise.resolve(undefined)),
+		setActiveLeaf: vi.fn(),
 		detachLeavesOfType: vi.fn(() => {
 			leaves.length = 0;
 		}),
@@ -106,6 +107,9 @@ describe("plugin lifecycle", () => {
 			await tick();
 			expect(host.created).toBe(1);
 			expect(host.workspace.revealLeaf).toHaveBeenCalledTimes(1);
+			expect(host.workspace.setActiveLeaf).toHaveBeenCalledWith(host.leaves[0], {
+				focus: true,
+			});
 			expect(host.vault.getFiles).not.toHaveBeenCalled();
 			expect(host.vault.readBinary).not.toHaveBeenCalled();
 			expect(host.vault.adapter.read).not.toHaveBeenCalled();
@@ -137,6 +141,7 @@ describe("plugin lifecycle", () => {
 			command.callback();
 			await tick();
 			expect(host.created).toBe(1);
+			expect(host.workspace.setActiveLeaf).toHaveBeenCalledTimes(2);
 			expect(plugin.coordinator.getSnapshot().id).toBe(sessionId);
 			expect(plugin.coordinator.getSnapshot().setupConcern).toBe("output");
 			plugin.onunload();

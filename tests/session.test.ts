@@ -10,7 +10,8 @@ import {
 import type { ApplyInvocation } from "../src/planning";
 import type { ApplyInvocationResult } from "../src/apply-changes";
 import { createFactoryConfiguration } from "../src/types";
-import type { IdentificationResult } from "../src/resolver";
+import type { IdentificationResult, ManualIdentifierLookupResult } from "../src/resolver";
+import type { CanonicalBibliographicRecord } from "../src/types";
 
 function stored(
 	policy: "future-sessions" | "session-only" = "future-sessions",
@@ -177,6 +178,10 @@ function deferredValue<T>() {
 		resolve = yes;
 	});
 	return { promise, resolve };
+}
+
+async function tick(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function acceptedIdentification(title: string): IdentificationResult {
@@ -351,7 +356,6 @@ describe("plugin-owned session coordinator", () => {
 		const { store } = await storeWith();
 		const { apply, service } = recordingApplyService();
 		const host = vaultFixture();
-		host.addFile("Inbox/source.pdf");
 		const coordinator = makeCoordinator(store, {
 			applyService: service as never,
 			vault: host.vault,
@@ -432,6 +436,7 @@ describe("plugin-owned session coordinator", () => {
 	it("replans from fresh coordinator-owned collision snapshots after configuration changes", async () => {
 		const { store } = await storeWith();
 		const host = vaultFixture();
+		host.addFile("Inbox/source.pdf");
 		host.addFile("Inbox/source.pdf");
 		const paths = {
 			filePaths: ["Inbox/source.pdf"],
@@ -676,7 +681,9 @@ describe("coordinator-owned PDF membership", () => {
 		expect(coordinator.classifyPdfPath("A/one.pdf", oldSessionId)).toBe("selectable");
 		expect(coordinator.removePdf(firstId, oldSessionId)).toBe(false);
 		expect(coordinator.getSnapshot().revision).toBe(revision + 1);
-		const newSession = coordinator.createNewSession();
+		const started = await coordinator.startNewSession(true);
+		const newSession = coordinator.getSnapshot();
+		expect(started).toBe(true);
 		expect(coordinator.classifyPdfPath("B/two.pdf", oldSessionId)).toBe("stale-session");
 		expect(coordinator.addPdfs(["A/one.pdf"], oldSessionId).staleSession).toBe(true);
 		expect(coordinator.removePdf(added.addedItemIds[1], oldSessionId)).toBe(false);
@@ -877,7 +884,8 @@ describe("coordinator-owned PDF membership", () => {
 		coordinator.addPdfs([file.path], oldSessionId);
 		coordinator.beginReview();
 		await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
-		const newSession = coordinator.createNewSession();
+		await coordinator.startNewSession(true);
+		const newSession = coordinator.getSnapshot();
 		const newSessionBeforeLateResult = coordinator.getSnapshot();
 		expect(newSession.id).not.toBe(oldSessionId);
 		expect(newSessionBeforeLateResult.items).toEqual([]);
@@ -1387,5 +1395,574 @@ describe("coordinator-owned PDF membership", () => {
 		expect(admission.addedItemIds).toEqual(
 			invocation.operations.map((operation) => operation.itemId),
 		);
+	});
+});
+
+describe("coordinator-owned repair authority", () => {
+	function candidateRecord(title: string, doi: string): CanonicalBibliographicRecord {
+		return {
+			title,
+			authorship: {
+				authors: [
+					{ kind: "organization", literal: "Example Research Group" },
+					{ kind: "person", given: "Grace", family: "Hopper" },
+				],
+				completeness: "complete",
+				totalCountKnown: true,
+			},
+			year: 2023,
+			doi,
+			isbns: [],
+			journal: "Example Journal",
+			publisher: "Example Press",
+			provenance: { provider: "crossref", route: "doi", identifier: doi },
+		};
+	}
+
+	async function workingCoordinator(
+		options: {
+			manual?: (type: "doi" | "isbn", value: string) => Promise<ManualIdentifierLookupResult>;
+			applyService?: SessionCoordinatorOptions["applyService"];
+			runner?: (
+				file: TFile,
+				context: {
+					sourceObservation: { path: string; mtime: number; size: number };
+					shouldCancel: () => boolean;
+				},
+			) => Promise<IdentificationResult>;
+		} = {},
+	) {
+		const { store } = await storeWith();
+		const host = vaultFixture();
+		host.addFile("Inbox/source.pdf");
+		const coordinator = makeCoordinator(store, {
+			vault: host.vault,
+			identificationRunner: options.runner,
+			manualIdentifierLookupRunner: options.manual,
+			applyService: options.applyService,
+		});
+		seedTestItem(coordinator);
+		coordinator.beginReview();
+		const sessionId = coordinator.getSnapshot().id;
+		coordinator.openInspector("item-1", sessionId);
+		return { coordinator, sessionId, host };
+	}
+
+	async function unresolvedCoordinator(runner?: (file: TFile) => Promise<IdentificationResult>) {
+		const { store } = await storeWith();
+		const host = vaultFixture();
+		host.addFile("Inbox/source.pdf");
+		const identificationRunner =
+			runner ??
+			(() =>
+				Promise.resolve({
+					status: "needs-you" as const,
+					reason: "No automatic match.",
+					evidence: {
+						identifiers: [],
+						attempts: [],
+						titleCandidates: [],
+						diagnostics: [],
+					},
+				}));
+		const coordinator = makeCoordinator(store, { vault: host.vault, identificationRunner });
+		const sessionId = coordinator.getSnapshot().id;
+		const admission = coordinator.addPdfs(["Inbox/source.pdf"], sessionId);
+		const itemId = admission.addedItemIds[0];
+		coordinator.beginReview();
+		await tick();
+		if (!itemId) throw new Error("Expected PDF admission");
+		coordinator.openInspector(itemId, sessionId);
+		return { coordinator, sessionId, itemId, host };
+	}
+
+	it("keeps machine evidence and whole provider candidate separate until explicit confirmation", async () => {
+		const record = candidateRecord("A repaired provider title", "10.1234/repaired");
+		const manual = vi.fn((): Promise<ManualIdentifierLookupResult> =>
+			Promise.resolve({
+				status: "candidate",
+				record,
+				candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/repaired" },
+			}),
+		);
+		const { coordinator, sessionId } = await workingCoordinator({ manual });
+		const result = await coordinator.lookupManualIdentifier(
+			"item-1",
+			"doi",
+			"10.1234/repaired",
+			sessionId,
+		);
+		expect(result).toEqual({ status: "started" });
+		expect(manual).toHaveBeenCalledTimes(1);
+		const pending = coordinator.getSnapshot().items[0];
+		expect(pending?.identification).toMatchObject({
+			status: "resolved",
+			record: { title: "Example" },
+		});
+		expect(pending?.effectiveRecord?.title).toBe("Example");
+		expect(coordinator.acceptManualCandidate("item-1", sessionId)).toEqual({ accepted: true });
+		const accepted = coordinator.getSnapshot().items[0];
+		expect(accepted?.identification).toMatchObject({
+			status: "resolved",
+			record: { title: "Example" },
+		});
+		expect(accepted?.effectiveRecord).toEqual(record);
+		expect(accepted?.recordAuthority).toBe("user-selected");
+		expect(accepted?.plan).toMatchObject({
+			status: "eligible",
+			proposedRename: {
+				proposedName: "Example Research Group et al. (2023). A repaired provider title.pdf",
+			},
+		});
+		coordinator.dispose();
+	});
+
+	it("requires deliberate Use anyway when a manual candidate conflicts with PDF title evidence", async () => {
+		const manual = vi.fn((): Promise<ManualIdentifierLookupResult> =>
+			Promise.resolve({
+				status: "candidate",
+				record: candidateRecord("A provider title that differs", "10.1234/different"),
+				candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/different" },
+			}),
+		);
+		const { coordinator, sessionId } = await workingCoordinator({ manual });
+		const internal = coordinator as unknown as { session: IntakeSession };
+		const item = internal.session.items[0];
+		if (!item || item.identification.status !== "resolved")
+			throw new Error("Expected seeded item");
+		item.identification.evidence = {
+			identifiers: [],
+			attempts: [],
+			titleCandidates: ["The PDF title evidence"],
+			diagnostics: [],
+		};
+		await coordinator.lookupManualIdentifier("item-1", "doi", "10.1234/different", sessionId);
+		expect(coordinator.acceptManualCandidate("item-1", sessionId)).toEqual({
+			accepted: false,
+			requiresUseAnyway: true,
+			conflictingTitle: "The PDF title evidence",
+		});
+		expect(coordinator.getSnapshot().items[0]?.effectiveRecord?.title).toBe("Example");
+		expect(coordinator.acceptManualCandidate("item-1", sessionId, true)).toEqual({
+			accepted: true,
+		});
+		expect(coordinator.getSnapshot().items[0]?.effectiveRecord?.title).toBe(
+			"A provider title that differs",
+		);
+		coordinator.dispose();
+	});
+
+	it("validates and normalizes saved DOI and ISBNs without provider lookup, preserving author order", async () => {
+		const manual = vi.fn();
+		const { coordinator, sessionId } = await workingCoordinator({ manual });
+		const authorship = {
+			authors: [
+				{ kind: "person" as const, given: "Ada", family: "Lovelace" },
+				{ kind: "organization" as const, literal: "Research Group" },
+				{ kind: "literal" as const, literal: "Mononym" },
+				{ kind: "unresolved" as const, position: 3 },
+			],
+			completeness: "complete" as const,
+			totalCountKnown: true,
+		};
+		const invalid = coordinator.saveManualRecord(
+			"item-1",
+			{
+				authorship,
+				doi: "invalid",
+				isbns: ["9780306406158"],
+			},
+			sessionId,
+		);
+		expect(invalid.saved).toBe(false);
+		if (!invalid.saved) {
+			expect(invalid.fieldErrors.doi).toBeTruthy();
+			expect(invalid.fieldErrors.isbns).toBeTruthy();
+		}
+		const saved = coordinator.saveManualRecord(
+			"item-1",
+			{
+				title: "Edited title",
+				authorship,
+				year: 2025,
+				doi: "https://doi.org/10.1234/edited.",
+				isbns: ["0-306-40615-2", "0306406152", "978-0-306-40615-7"],
+				journal: "Edited Journal",
+				publisher: "Edited Press",
+			},
+			sessionId,
+		);
+		expect(saved).toEqual({ saved: true, authority: "user-edited" });
+		const item = coordinator.getSnapshot().items[0];
+		expect(item?.effectiveRecord).toMatchObject({
+			title: "Edited title",
+			doi: "10.1234/edited",
+			isbns: ["0306406152", "9780306406157"],
+			authorship: {
+				authors: [
+					{ kind: "person", given: "Ada", family: "Lovelace" },
+					{ kind: "organization", literal: "Research Group" },
+					{ kind: "literal", literal: "Mononym" },
+					{ kind: "unresolved", position: 3 },
+				],
+				completeness: "partial",
+				totalCountKnown: true,
+			},
+			provenance: { kind: "user-edited" },
+		});
+		expect(item?.identification).toMatchObject({
+			status: "resolved",
+			record: { title: "Example" },
+		});
+		const incomplete = coordinator.saveManualRecord(
+			"item-1",
+			{
+				authorship: {
+					authors: [],
+					completeness: "unknown",
+					totalCountKnown: false,
+				},
+				isbns: [],
+			},
+			sessionId,
+		);
+		expect(incomplete).toEqual({ saved: true, authority: "user-edited" });
+		expect(coordinator.getSnapshot().items[0]?.effectiveRecord).toMatchObject({
+			authorship: { authors: [], completeness: "unknown", totalCountKnown: false },
+		});
+		expect(coordinator.getSnapshot().items[0]?.currentStatus).toBe("needs-you");
+		expect(manual).not.toHaveBeenCalled();
+		coordinator.dispose();
+	});
+
+	it("retains effective automatic authority during retry and requires confirmation to replace a user choice", async () => {
+		const pending = deferredValue<IdentificationResult>();
+		const { coordinator, sessionId } = await workingCoordinator({
+			runner: () => pending.promise,
+		});
+		const retry = coordinator.retryIdentification("item-1", sessionId);
+		expect(retry).toEqual({ started: true });
+		expect(coordinator.getSnapshot().items[0]).toMatchObject({
+			repairActivity: "retry-pending",
+			effectiveRecord: { title: "Example" },
+		});
+		pending.resolve({
+			status: "needs-you",
+			reason: "No automatic match.",
+			evidence: { identifiers: [], attempts: [], titleCandidates: [], diagnostics: [] },
+		});
+		await tick();
+		expect(coordinator.getSnapshot().items[0]).toMatchObject({
+			repairActivity: "idle",
+			effectiveRecord: { title: "Example" },
+		});
+		coordinator.saveManualRecord(
+			"item-1",
+			{
+				title: "User record",
+				authorship: { authors: [], completeness: "unknown", totalCountKnown: false },
+				isbns: [],
+			},
+			sessionId,
+		);
+		expect(coordinator.retryIdentification("item-1", sessionId)).toMatchObject({
+			started: false,
+			confirmationRequired: true,
+		});
+		coordinator.dispose();
+	});
+
+	it("rejects late manual lookup after inspector close or replacement lookup", async () => {
+		const closing = deferredValue<ManualIdentifierLookupResult>();
+		const old = deferredValue<ManualIdentifierLookupResult>();
+		const newest = deferredValue<ManualIdentifierLookupResult>();
+		const manual = vi
+			.fn()
+			.mockImplementationOnce(() => closing.promise)
+			.mockImplementationOnce(() => old.promise)
+			.mockImplementationOnce(() => newest.promise);
+		const { coordinator, sessionId } = await workingCoordinator({ manual });
+		const closingResult = coordinator.lookupManualIdentifier(
+			"item-1",
+			"doi",
+			"10.1234/close",
+			sessionId,
+		);
+		coordinator.closeInspector("item-1", sessionId);
+		closing.resolve({
+			status: "candidate",
+			record: candidateRecord("Late", "10.1234/close"),
+			candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/close" },
+		});
+		expect(await closingResult).toMatchObject({ status: "rejected" });
+		expect(coordinator.getSnapshot().items[0]?.repairEvidence).toBeUndefined();
+		coordinator.openInspector("item-1", sessionId);
+		const oldLookup = coordinator.lookupManualIdentifier(
+			"item-1",
+			"doi",
+			"10.1234/old",
+			sessionId,
+		);
+		const newLookup = coordinator.lookupManualIdentifier(
+			"item-1",
+			"doi",
+			"10.1234/new",
+			sessionId,
+		);
+		newest.resolve({
+			status: "candidate",
+			record: candidateRecord("Newest", "10.1234/new"),
+			candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/new" },
+		});
+		expect(await newLookup).toEqual({ status: "started" });
+		old.resolve({
+			status: "candidate",
+			record: candidateRecord("Old", "10.1234/old"),
+			candidate: { provider: "crossref", route: "doi", lookupValue: "10.1234/old" },
+		});
+		expect(await oldLookup).toMatchObject({ status: "rejected" });
+		expect(
+			coordinator
+				.getSnapshot()
+				.items[0]?.repairEvidence?.map((attempt) => attempt.identifier),
+		).toEqual(["10.1234/new"]);
+		coordinator.dispose();
+	});
+
+	it("rejects a manual lookup result after source observation changes", async () => {
+		const pending = deferredValue<ManualIdentifierLookupResult>();
+		const manual = vi.fn(() => pending.promise);
+		const { coordinator, sessionId, host } = await workingCoordinator({ manual });
+		const lookup = coordinator.lookupManualIdentifier(
+			"item-1",
+			"isbn",
+			"0-306-40615-2",
+			sessionId,
+		);
+		const source = host.entries.get("Inbox/source.pdf");
+		if (!(source instanceof TFile)) throw new Error("Expected fixture PDF");
+		source.stat.mtime++;
+		pending.resolve({
+			status: "candidate",
+			record: candidateRecord("Late source result", "10.1234/source"),
+			candidate: { provider: "crossref", route: "isbn", lookupValue: "0306406152" },
+		});
+		expect(await lookup).toMatchObject({ status: "rejected" });
+		expect(coordinator.getSnapshot().items[0]?.repairEvidence).toBeUndefined();
+		expect(coordinator.getSnapshot().items[0]?.repairActivity).toBe("idle");
+		coordinator.dispose();
+	});
+
+	it("rejects late manual results after item removal or session replacement", async () => {
+		for (const action of ["remove", "replace"] as const) {
+			const pending = deferredValue<ManualIdentifierLookupResult>();
+			const { coordinator, sessionId } = await workingCoordinator({
+				manual: () => pending.promise,
+			});
+			const lookup = coordinator.lookupManualIdentifier(
+				"item-1",
+				"doi",
+				`10.1234/${action}`,
+				sessionId,
+			);
+			if (action === "remove") {
+				expect(coordinator.returnToSetup(sessionId)).toBe(true);
+				expect(coordinator.removePdf("item-1", sessionId)).toBe(true);
+			} else {
+				expect(await coordinator.startNewSession(true)).toBe(true);
+			}
+			pending.resolve({
+				status: "candidate",
+				record: candidateRecord("Late result", `10.1234/${action}`),
+				candidate: {
+					provider: "crossref",
+					route: "doi",
+					lookupValue: `10.1234/${action}`,
+				},
+			});
+			expect(await lookup).toMatchObject({ status: "rejected" });
+			expect(coordinator.getSnapshot().items).toEqual([]);
+			coordinator.dispose();
+		}
+	});
+
+	it("rejects a manual result after Apply becomes active", async () => {
+		const pendingManual = deferredValue<ManualIdentifierLookupResult>();
+		const pendingApply = deferredValue<ApplyInvocationResult>();
+		const apply = vi.fn(() => pendingApply.promise);
+		const { coordinator, sessionId } = await workingCoordinator({
+			manual: () => pendingManual.promise,
+			applyService: { apply } as never,
+		});
+		const lookup = coordinator.lookupManualIdentifier(
+			"item-1",
+			"doi",
+			"10.1234/apply-guard",
+			sessionId,
+		);
+		const applying = coordinator.applyReviewedPlan();
+		await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+		pendingManual.resolve({
+			status: "candidate",
+			record: candidateRecord("Too late", "10.1234/apply-guard"),
+			candidate: {
+				provider: "crossref",
+				route: "doi",
+				lookupValue: "10.1234/apply-guard",
+			},
+		});
+		expect(await lookup).toMatchObject({ status: "rejected" });
+		expect(coordinator.getSnapshot().items[0]?.repairEvidence).toBeUndefined();
+		pendingApply.resolve({ status: "rejected", message: "Controlled Apply settlement." });
+		await applying;
+		coordinator.dispose();
+	});
+
+	it("keeps Left unresolved distinct from no-change and restores repair only explicitly", async () => {
+		const { coordinator, sessionId, itemId } = await unresolvedCoordinator();
+		expect(coordinator.getSnapshot().items).toHaveLength(1);
+		expect(coordinator.getSnapshot().items[0]?.currentStatus).toBe("needs-you");
+		expect(coordinator.leaveUnresolved(itemId, sessionId)).toBe(true);
+		expect(coordinator.getSnapshot().items[0]).toMatchObject({
+			disposition: "left-unresolved",
+			currentStatus: "left-unresolved",
+		});
+		expect(coordinator.getSnapshot().planningSnapshot?.results[0]).toMatchObject({
+			status: "blocked",
+		});
+		expect(coordinator.leaveUnresolved(itemId, sessionId)).toBe(false);
+		expect(coordinator.resumeRepair(itemId, sessionId)).toBe(true);
+		expect(coordinator.getSnapshot().items[0]?.disposition).toBeUndefined();
+		expect(coordinator.getSnapshot().items[0]?.currentStatus).toBe("needs-you");
+		coordinator.dispose();
+	});
+
+	it("selects one retained machine candidate whole and bounds prior retry summaries", async () => {
+		const selected = candidateRecord("Whole machine candidate", "10.1234/candidate");
+		const providerRecord = {
+			provider: "crossref" as const,
+			...(({ provenance: _provenance, ...fields }) => fields)(selected),
+			diagnostics: [],
+		};
+		const evidence = {
+			identifiers: [],
+			attempts: [
+				{
+					provider: "crossref" as const,
+					route: "doi" as const,
+					lookupValue: "10.1234/candidate",
+					outcome: "ambiguous" as const,
+					candidateRecord: providerRecord,
+				},
+			],
+			titleCandidates: [],
+			diagnostics: [],
+		};
+		const result: IdentificationResult = {
+			status: "needs-you",
+			reason: "Ambiguous.",
+			evidence,
+		};
+		const runner = vi.fn(() => Promise.resolve(result));
+		const { coordinator, sessionId, itemId } = await unresolvedCoordinator(runner);
+		const chosen = coordinator.selectMachineCandidate(itemId, sessionId, {
+			provider: "crossref",
+			route: "doi",
+			lookupValue: "10.1234/candidate",
+		});
+		expect(chosen).toEqual({ accepted: true });
+		expect(coordinator.getSnapshot().items[0]?.effectiveRecord).toMatchObject({
+			title: "Whole machine candidate",
+			year: 2023,
+			journal: "Example Journal",
+			authorship: {
+				authors: [
+					{ kind: "organization", literal: "Example Research Group" },
+					{ kind: "person", given: "Grace", family: "Hopper" },
+				],
+			},
+		});
+		expect(coordinator.getSnapshot().items[0]?.identification).toMatchObject({
+			status: "needs-user",
+			evidence: { attempts: [{ candidateRecord: { title: "Whole machine candidate" } }] },
+		});
+		for (let attempt = 0; attempt < 4; attempt++) {
+			coordinator.retryIdentification(itemId, sessionId, true);
+			await tick();
+		}
+		expect(coordinator.getSnapshot().items[0]?.identificationHistory).toHaveLength(2);
+		expect(runner).toHaveBeenCalledTimes(5);
+		coordinator.dispose();
+	});
+
+	it("replans current status after editing an Applied record to Ready and then Needs you", async () => {
+		const { store } = await storeWith();
+		const host = vaultFixture();
+		const source = host.addFile("Inbox/source.pdf");
+		const apply = vi.fn((invocation: ApplyInvocation): Promise<ApplyInvocationResult> => {
+			const operation = invocation.operations[0];
+			if (!operation) throw new Error("Expected rename operation");
+			host.moveFile(source, operation.destinationPath);
+			return Promise.resolve({
+				status: "completed",
+				invocationId: invocation.invocationId,
+				outcomes: [
+					{
+						itemId: operation.itemId,
+						status: "renamed",
+						sourcePath: operation.sourcePath,
+						destinationPath: operation.destinationPath,
+						effects: { path: true, pdfBytes: false },
+					},
+				],
+			});
+		});
+		const coordinator = makeCoordinator(store, {
+			vault: host.vault,
+			applyService: { apply } as never,
+		});
+		seedTestItem(coordinator);
+		const sessionId = coordinator.getSnapshot().id;
+		coordinator.beginReview();
+		coordinator.openInspector("item-1", sessionId);
+		expect(coordinator.getSnapshot().items[0]?.currentStatus).toBe("ready");
+		expect((await coordinator.applyReviewedPlan()).status).toBe("completed");
+		expect(coordinator.getSnapshot().items[0]?.currentStatus).toBe("applied");
+		coordinator.saveManualRecord(
+			"item-1",
+			{
+				title: "Edited after Apply",
+				authorship: {
+					authors: [{ kind: "person", given: "Ada", family: "Lovelace" }],
+					completeness: "complete",
+					totalCountKnown: true,
+				},
+				year: 2024,
+				isbns: [],
+			},
+			sessionId,
+		);
+		expect(coordinator.getSnapshot().items[0]).toMatchObject({
+			currentStatus: "ready",
+			applyOutcome: { status: "renamed" },
+			effectiveRecord: { title: "Edited after Apply" },
+		});
+		coordinator.saveManualRecord(
+			"item-1",
+			{
+				authorship: { authors: [], completeness: "unknown", totalCountKnown: false },
+				isbns: [],
+			},
+			sessionId,
+		);
+		expect(coordinator.getSnapshot().items[0]).toMatchObject({
+			currentStatus: "needs-you",
+			applyOutcome: { status: "renamed" },
+		});
+		expect(coordinator.getSnapshot().items[0]?.identification).toMatchObject({
+			status: "resolved",
+			record: { title: "Example" },
+		});
+		coordinator.dispose();
 	});
 });

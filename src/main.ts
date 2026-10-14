@@ -5,7 +5,7 @@ import { SessionCoordinator } from "./session";
 import { IntakeSettingTab } from "./settings";
 import { PdfIntakeView, PDF_INTAKE_VIEW_TYPE } from "./view";
 import { terminatePdfWorker } from "./pdf-text";
-import { identifyPdf } from "./resolver";
+import { identifyPdf, lookupManualIdentifier } from "./resolver";
 
 export default class PdfIntakePlugin extends Plugin {
 	store!: PluginDataStore;
@@ -25,6 +25,7 @@ export default class PdfIntakePlugin extends Plugin {
 		this.coordinator = new SessionCoordinator(this.store, {
 			applyService,
 			vault,
+			initialDraft: this.store.getDraftNamespace(),
 			planningEnvironment: {
 				getSnapshot: () => ({
 					filePaths: vault.getFiles().map((file) => file.path),
@@ -36,6 +37,7 @@ export default class PdfIntakePlugin extends Plugin {
 				identifyPdf(file, vault, this.getPdfWorkerAssetPath(), {
 					shouldCancel: context.shouldCancel,
 				}),
+			manualIdentifierLookupRunner: (type, value) => lookupManualIdentifier(type, value),
 		});
 		this.registerView(
 			PDF_INTAKE_VIEW_TYPE,
@@ -90,7 +92,10 @@ export default class PdfIntakePlugin extends Plugin {
 		}
 		await workspace.revealLeaf(leaf);
 		await leaf.loadIfDeferred();
-		if (!(leaf.view instanceof PdfIntakeView))
+		if (leaf.view instanceof PdfIntakeView) {
+			workspace.setActiveLeaf(leaf, { focus: true });
+		} else {
 			new Notice("Could not open the PDF Intake view.");
+		}
 	}
 }

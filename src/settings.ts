@@ -1,6 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type PdfIntakePlugin from "./main";
-import { isUsableLegacyTemplate } from "./planning";
+import { isUsableLegacyTemplate } from "./filename-template";
 import type { OutputLocation } from "./types";
 
 function outputChoice(output: OutputLocation): string {
@@ -169,7 +169,7 @@ export class IntakeSettingTab extends PluginSettingTab {
 
 		if (this.plugin.store.getDraftNamespace() !== null) {
 			containerEl.createEl("p", {
-				text: "An unfinished session record is retained, but session restoration is not available yet.",
+				text: "Saved PDF Intake session data needs a decision in PDF Intake.",
 			});
 		}
 	}

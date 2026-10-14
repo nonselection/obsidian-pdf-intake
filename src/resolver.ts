@@ -14,6 +14,7 @@ import {
 } from "./lookup";
 import { extractPdfEvidence, IdentificationCancelledError, type PdfTextEvidence } from "./pdf-text";
 import type {
+	CandidateReference,
 	CanonicalBibliographicRecord,
 	IdentificationEvidence,
 	IdentifierCandidateEvidence,
@@ -53,6 +54,13 @@ export interface IdentificationRunOptions {
 	shouldCancel?: () => boolean;
 }
 
+export type ManualIdentifierType = "doi" | "isbn";
+
+export type ManualIdentifierLookupResult =
+	| { status: "candidate"; record: CanonicalBibliographicRecord; candidate: CandidateReference }
+	| { status: "no-record" | "request-failed"; candidate: CandidateReference }
+	| { status: "invalid" };
+
 const DEFAULT_LOOKUPS: IdentificationLookups = {
 	lookupDoi,
 	lookupIsbn,
@@ -75,6 +83,40 @@ function normalizeTitle(value: string): string {
 		.replace(/\p{P}+/gu, " ")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+/** Direct one-provider lookup for a coordinator-validated manual DOI or ISBN. */
+export async function lookupManualIdentifier(
+	type: ManualIdentifierType,
+	value: string,
+	lookups: IdentificationLookups = DEFAULT_LOOKUPS,
+): Promise<ManualIdentifierLookupResult> {
+	const normalized = type === "doi" ? normalizeDoi(value) : normalizeIsbn(value);
+	if (!normalized) return { status: "invalid" };
+	const candidate: CandidateReference = {
+		provider: type === "doi" ? "crossref" : "openlibrary",
+		route: type,
+		lookupValue: normalized,
+	};
+	const outcome =
+		type === "doi" ? await lookups.lookupDoi(normalized) : await lookups.lookupIsbn(normalized);
+	if (outcome.status !== "record") return { status: outcome.status, candidate };
+	return {
+		status: "candidate",
+		record: canonicalRecord(outcome.record, type, normalized),
+		candidate,
+	};
+}
+
+/** Returns a retained PDF title candidate when a direct manual result disagrees with it. */
+export function manualTitleConflict(
+	providerTitle: string | undefined,
+	localTitles: readonly string[],
+): string | undefined {
+	if (!providerTitle?.trim() || localTitles.length === 0) return undefined;
+	const normalized = normalizeTitle(providerTitle);
+	if (localTitles.some((title) => normalizeTitle(title) === normalized)) return undefined;
+	return localTitles[0];
 }
 
 function safeTitleCandidates(values: readonly string[]): string[] {

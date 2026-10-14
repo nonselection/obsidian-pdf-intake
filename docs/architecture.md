@@ -1,7 +1,7 @@
 # PDF Intake architecture
 
-Status: Slice 3 implemented; repair, draft recovery, and final mobile/accessibility qualification remain incomplete
-Last updated: 2026-10-09
+Status: Slice 4 implemented; mobile/iPad and final accessibility/visual qualification remain incomplete
+Last updated: 2026-10-11
 
 PDF Intake is a small Obsidian plugin for normalizing the bibliographic envelope of existing PDFs.
 
@@ -9,7 +9,7 @@ The target input is a PDF whose document content is already useful/correct but w
 
 The target output is the same document content with a clean, trustworthy bibliographic envelope.
 
-The current implementation provides explicit vault-scoped admission, coordinator-owned automatic identification, the stable working surface and reviewed rename-only Apply. Slice 3 results remain transient across plugin reload. The [redesign contract and architectural seams](#redesign-contract-and-architectural-seams) record the approved target, and the [overall implementation plan](../.codex/architecture/implementation-plan.md) defines its delivery boundaries.
+The current implementation provides explicit vault-scoped admission, coordinator-owned identification and repair, a contextual item inspector, unfinished-session draft recovery, and reviewed rename-only Apply. Draft recovery restores unfinished work after source revalidation; it does not recover or replay file operations.
 
 ## Product boundary
 
@@ -33,20 +33,20 @@ It does not aim to provide:
 - reference-library management;
 - background watched-folder automation.
 
-## Current Slice 3 system shape
+## Current Slice 4 system shape
 
 ```text
 Open or focus PDF Intake
         ↓
-fresh plugin-owned empty session
+fresh session or recovery-decision gate
         ↓
 setup: explicit PDFs / Output / Metadata & naming
         ↓
 Begin review → bounded automatic identification
         ↓
-membership-ordered Identifying / Needs you / Ready cards
+membership-ordered cards → inspect evidence and repair explicitly
         ↓
-pure planning → frozen Ready subset → rename-only ApplyChangesService
+effective record → pure planning → frozen Ready subset → rename-only ApplyChangesService
 ```
 
 The plugin does not scan folders for membership. PDF bytes remain read-only; explicit Apply changes paths only.
@@ -70,7 +70,7 @@ Running the command or ribbon action:
 3. load it if Obsidian has deferred the custom view;
 4. create a new leaf only if no PDF Intake view exists.
 
-The plugin owns one session coordinator for its lifetime. A newly opened session copies effective defaults into detached session values and starts with a fresh identity, zero PDFs, setup open and PDFs selected. Closing and reopening the ItemView does not reset the session. Plugin reload creates a new empty runtime session; Slice 3 membership and identification results are transient and are not restored.
+The plugin owns one session coordinator for its lifetime. A newly opened session copies effective defaults into detached session values and starts with a fresh identity, zero PDFs, setup open and PDFs selected. The session becomes draft-backed immediately after its first successful PDF admission. Closing and reopening the ItemView does not reset the session. On plugin reload, a saved draft presents a coordinator-enforced recovery gate. Resume creates a fresh runtime identity, restores the saved configuration and order, and revalidates each saved exact source path before planning.
 
 The setup rail always contains PDFs, Output and Metadata & naming. Add PDFs opens the explicit vault-scoped chooser. Begin review is disabled at zero membership and automatically begins identification for current admitted PDFs when membership is positive. Edit session returns to the same setup and preserves completed evidence. Output supports current source folders and a selected existing vault folder, including an explicit vault-root choice. Metadata & naming shows a concrete example and accepts a simple custom template while preserving component-format defaults and exact valid migrated templates.
 
@@ -80,9 +80,9 @@ The workflow deliberately avoids a blocking batch modal because intake work may 
 
 ### Session and persistence ownership
 
-Session membership is coordinator-owned and comes only from explicit chooser admission. There is no intake-folder scanning or background membership discovery. Identification state, attempt evidence and Apply outcomes remain in memory for the plugin lifetime; no draft write is made.
+Session membership is coordinator-owned and comes only from explicit chooser admission. There is no intake-folder scanning or background membership discovery. Once the first PDF is admitted, a bounded versioned draft stores detached unfinished-session state. It is cleared only by explicit Finish or confirmed Start new/discard. View close does not finish a session.
 
-Plugin data is schema-versioned and separates settings/defaults, workspace edit policy and an opaque unfinished-session draft namespace. One `PluginDataStore` serializes partial updates against the latest successfully saved envelope. Settings patches preserve the draft; draft patches preserve settings. Failed writes do not publish speculative committed values. Local queue ordering is not a crash-atomic or multi-device guarantee.
+Plugin data is schema-versioned and separates settings/defaults, workspace edit policy and an independently versioned draft payload inside the existing unfinished-session namespace. `SessionCoordinator` captures and sequences draft snapshots; `PluginDataStore` is the sole plugin-data writer and serializes settings/draft updates against the latest successfully saved envelope. Failed writes do not corrupt live session behavior or publish speculative committed values. Local queue ordering is not a crash-atomic or multi-device guarantee.
 
 Known flat legacy settings migrate selectively. `intakeFolder` and `intakeFolders` never become session membership. Valid supported filename templates and unambiguous existing destinations are preserved. An empty or invalid legacy `another` destination becomes current source folders; it is not interpreted as vault root. Corrupt or unknown data stays read-only and is not automatically rewritten. New-model destinations that later disappear remain visible as invalid intent.
 
@@ -107,7 +107,7 @@ PDF.js is a read/parser dependency here, not the future metadata-write library.
 
 ### Bibliographic resolver
 
-Begin review starts coordinator-owned automatic identification through the shared resolver. The working surface has no ordinary global Resolve action. Manual DOI/ISBN repair remains deferred.
+Begin review starts coordinator-owned automatic identification through the shared resolver. The working surface has no ordinary global Resolve action. A contextual inspector shows bounded evidence and provides explicit retry, direct DOI/ISBN lookup, whole-candidate selection, manual record editing, and leave-unresolved controls.
 
 Current supported provider behavior:
 
@@ -116,7 +116,7 @@ Current supported provider behavior:
 
 The resolver must not invent missing bibliographic metadata.
 
-A manual DOI/ISBN can be supplied for unresolved/error entries and retried without leaving the workspace.
+A manual DOI/ISBN can be supplied for any current, trusted item through its inspector. Each submission uses one mapped provider request and remains pending user acceptance.
 
 Known limitation: some real PDFs visibly contain a DOI that current extraction/detection does not find. This is a resolver/extraction quality issue, not expected behavior.
 
@@ -214,9 +214,7 @@ The current ribbon action uses the same open/reveal method as the command.
 
 Begin review starts coordinator-owned automatic identification through the shared resolver. The working surface has no ordinary global Resolve action.
 
-Manual DOI/ISBN repair is a later slice and will use the shared resolver.
-
-Manual DOI/ISBN repair and retry remain deferred. Any progress feedback must remain truthful about the current provider or fallback attempt.
+Manual DOI/ISBN lookup is coordinator-owned and uses one mapped provider request after local normalization/validation. Invalid input makes no request. A provider candidate is not authoritative until the user accepts it; title conflicts require an explicit Use anyway action. Retry reruns the bounded automatic identification pipeline and is never triggered merely by reopening or resuming a session. Repair activity is separate from the effective record and prior valid authority remains in place until an explicit accepted replacement.
 
 ### Mutation
 
@@ -224,15 +222,15 @@ Apply is explicit and reviewed, and is available only for the current eligible R
 
 The reviewed destination is frozen into the invocation and revalidated immediately before each rename.
 
-Unresolved, error and conflict items remain untouched.
+Unresolved, blocked and left-unresolved items remain outside the Apply scope. Before a draft-backed Apply, the coordinator attempts to persist a stable pre-Apply snapshot through the ordered draft queue. A failed checkpoint raises a generic recovery warning but does not cancel an explicitly authorized Apply. After settlement, only verified same-binding source changes are reconciled and one coherent draft snapshot is requested. This is not an operation journal or transactional Apply.
 
 ### Session persistence boundary
 
-The coordinator-owned runtime session survives view close/reopen within one plugin lifetime. Slice 3 membership and identification results are transient across plugin reload. Complete session-draft serialization/restoration remains deferred; the opaque draft namespace is not hydrated or cleared by session/default edits.
+The coordinator-owned runtime session survives view close/reopen within one plugin lifetime. After first admission, a versioned draft preserves unfinished configuration, ordered membership, bounded evidence, user decisions, dispositions, useful Apply summaries and at most one unsaved inspector form. A recovery-decision gate blocks ordinary mutation until the human resumes or confirms discard. Malformed/future drafts remain preserved until explicit discard. Finish is available only when every member is Applied, currently requires no changes, or is left unresolved; an empty draft-backed session can be finished with confirmation. Finish clears the draft before replacing the session.
 
-## Redesign contract and architectural seams
+## Product interaction and domain contracts
 
-These are durable target decisions. Slices 1–3 implement the session/configuration/persistence/authorship/planning/Apply seams, explicit admission, automatic identification and the initial working surface. Repair, draft restoration, and final visual/accessibility qualification remain incomplete. Behavioral authority is [Interaction Contract v0.1.2](../.codex/architecture/PDF_Intake_Interaction_Contract_v0.1.2.md), with the human's 2026-10-07 additions recorded here taking precedence where they differ. Visual concepts are design references, not executable specifications.
+These are the current product interaction and architectural contracts. Contextual repair and unfinished-session recovery are implemented. Final visual/accessibility and mobile/iPad qualification remain incomplete. Visual concepts are design references, not executable specifications.
 
 ### Reconciled interaction authority
 
@@ -243,7 +241,7 @@ These are durable target decisions. Slices 1–3 implement the session/configura
 | Begin review    | Available only with at least one PDF. It enters working mode and automatically starts read-only identification of unresolved PDFs. Invalid output must not prevent identification.                | v0.1.2 section 13's ordinary manual/global lookup trigger.                                                                         |
 | Working surface | Fixed context bar: Edit session and **Identifying → Needs you → Ready** information on the left; **Apply changes to N PDFs** on the right. Zero states may disappear without reordering the rest. | Global Resolve/Process-selected toolbar; summary's compulsory total-PDF count.                                                     |
 | PDF objects     | Stable session membership/order; identity becomes primary after identification and the old name remains provenance. Successful cards stay visible.                                                | Moving cards to express process progress, permanent state columns or gravity simulation.                                           |
-| Repair          | Card-local, explicitly closable contextual inspection and DOI/ISBN retry, including inspecting a suspicious successful match.                                                                     | Permanent right inspector; nested Edit → modal → modal chains; failure addressed by another global resolver pass.                  |
+| Repair          | One explicitly closable inline inspector; bounded evidence; direct DOI/ISBN lookup; whole-candidate selection; manual record Save; explicit retry and leave-unresolved.                           | Permanent right inspector; nested Edit → modal → modal chains; failure addressed by another global resolver pass.                  |
 | Apply           | Explicitly apply eligible Ready PDFs; unresolved/problem entries remain untouched and stay in the session.                                                                                        | Checkbox-driven batch scope and a global busy flag coupling read-only identification to mutation eligibility.                      |
 
 Setup navigation remains present from the initial empty state. Before review, the PDFs concern shows the explicit manifest, **Add more PDFs** and individual removal. Fresh setup may quietly show current Output and Metadata & naming values without dashboard-style setting cards. Setup collapses in working mode and Edit session reopens the same surface without restarting the session.
@@ -263,11 +261,11 @@ Plugin Settings has a **Defaults** section whose first control is the workspace-
 
 The defaults follow that control. The working set is never a durable default. Keep each PDF in its current parent folder is the factory output-location default, including PDFs originating in different folders or the vault root. A single chosen existing vault folder is the other baseline mode. Invalid/missing output folders block Apply, not read-only identification, and are never silently created.
 
-Legacy settings migration preserves valid filename-format preferences where they map cleanly and valid destinations only where they map unambiguously. Old `intake` destination mode maps to **current source folders**, not an intake root. An empty/invalid legacy `another` destination is malformed obsolete state and falls back to **Keep each PDF in its current folder**; migration must not retain a permanently blocked preference or infer a destination folder. `intakeFolder` / `intakeFolders` never populate a session or initiate scanning. This repair rule concerns legacy migration; a new-model destination that later disappears remains an explicit current configuration problem. Detailed decode/migration rules belong in Slice 1's plan.
+Legacy settings migration preserves valid filename-format preferences where they map cleanly and valid destinations only where they map unambiguously. Old `intake` destination mode maps to **current source folders**, not an intake root. An empty/invalid legacy `another` destination is malformed obsolete state and falls back to **Keep each PDF in its current folder**; migration must not retain a permanently blocked preference or infer a destination folder. `intakeFolder` / `intakeFolders` never populate a session or initiate scanning. This repair rule concerns legacy migration; a new-model destination that later disappears remains an explicit current configuration problem.
 
-Plugin persistence has one versioned envelope with separate durable defaults/settings, workspace persistence policy and unfinished-session draft namespaces. One persistence owner serializes partial updates against its latest successfully saved envelope; settings updates preserve draft data and draft updates preserve settings/policy. No view or settings component writes the entire plugin-data object. Absent data can initialize factory defaults, while corrupt/unreadable or unsupported-version data is preserved without an automatic destructive overwrite. Complete draft save/restore behavior remains deferred, but the namespace and update API must already exist in Slice 1.
+Plugin persistence has one versioned root envelope with separate durable defaults/settings, workspace persistence policy and an unfinished-session draft namespace carrying its own supported version. One persistence owner serializes partial updates against its latest successfully saved envelope; settings updates preserve draft data and draft updates preserve settings/policy. No view or settings component writes the entire plugin-data object. Absent data can initialize factory defaults, while corrupt/unreadable or unsupported-version root data is preserved without an automatic destructive overwrite. A malformed or future draft remains preserved and gates ordinary session mutation until explicit discard.
 
-The naming model must support arbitrary ordered/repeated components, literal text and parameterized output-specific representations without a mandatory three-slot structure. Valid existing user templates remain exact compatibility preferences, not the new component-domain abstraction. The final builder interaction remains a later design prerequisite; Slice 1 establishes the representation/formatter boundary and factory format now.
+The naming model supports arbitrary ordered/repeated components, literal text and parameterized output-specific representations without a mandatory three-slot structure. Valid existing user templates remain exact compatibility preferences, not the new component-domain abstraction. The filename component builder remains future work; Slice 4 keeps the existing Metadata & naming surface.
 
 ### Canonical authorship and derived output representations
 
@@ -302,19 +300,23 @@ Addition references an existing PDF, with no copy/import/move or folder scan tha
 
 ### Identification, planning and presentation are distinct
 
-Keep the shared resolver and its PDF.js read boundary. SessionCoordinator schedules unresolved work on Begin review with a maximum of two unsettled PDF jobs. Editing the session returns to setup; re-entry schedules newly admitted/unattempted work without restarting completed evidence. Manual DOI/ISBN retry remains deferred.
+Keep the shared resolver and its PDF.js read boundary. SessionCoordinator schedules unresolved work on Begin review with a maximum of two unsettled PDF jobs. Editing the session returns to setup; re-entry schedules newly admitted/unattempted work without restarting completed evidence. Manual DOI/ISBN lookup and retry are explicit coordinator actions; resuming a draft does not retry completed failure or ambiguity.
 
 Identification state/evidence, user repairs, plan validity and apply outcome must be distinguishable. A resolved bibliographic record is not automatically an applicable transformation. Missing required naming data, invalid destinations, source invalidation and conflicts are separately explainable blockers; changing Output must not erase successful identification. At the surface, local failures/blockers can appear as Needs you, with shared configuration problems explained in setup/context.
 
-Ready means a current, valid preview with changes supported by the current implementation, not merely a provider response. Ready counts and Apply scope derive from the same plans. A filename/path no-op is not a normalization success or a Ready mutation; later metadata/sidecar changes must be considered independently. Applied outcomes are shown truthfully and excluded from another Apply; unresolved objects remain available. Exact completion/new-session UX remains a slice-level design question.
+Ready means a current, valid preview with changes supported by the current implementation, not merely a provider response. Ready counts and Apply scope derive from the same plans. A filename/path no-op is not a normalization success or a Ready mutation; later metadata/sidecar changes must be considered independently. Applied outcomes are shown truthfully and excluded from another Apply; unresolved objects remain available. Finish and confirmed Start new/discard clear draft state before installing a fresh session.
 
-The coordinator owns asynchronous results independently of the DOM. Removed/replaced session items, changed sources and superseded attempts cannot receive late results. Slice 3 uses a bounded queue of two unsettled PDF jobs; configuration changes replan retained evidence without repeating provider work. Render updates preserve stable membership order and focus while statuses change.
+The coordinator owns asynchronous results independently of the DOM. Removed/replaced session items, changed sources and superseded attempts cannot receive late results. The existing bounded queue allows at most two unsettled PDF identification jobs; configuration changes replan retained evidence without repeating provider work. Render updates preserve stable membership order and focus while statuses change.
+
+The accepted automatic record remains separate from whole user-selected candidates and user-edited records. The effective planning record is the user decision when present, otherwise the accepted automatic record; provider records are never fieldwise merged. Pending retry or manual lookup activity does not erase effective authority. Explicit accepted changes invalidate the current plan and replan against current source trust and configuration. Applied and no-change are derived from the current plan, so a later edit can return a card to Ready or Needs you. Left unresolved remains terminal for that item until Resume repair.
+
+The inline inspector is shown for one item at a time and uses normal document flow in narrow panes. Identifying items are read-only. Stale sources retain historical evidence but have no repair, planning or Apply authority. A manual form is local until explicit Save; switching cards or closing it offers Save, Discard or Stay. At most one detached form can be preserved as explicitly unsaved state. It is not canonical or planner input and can still be lost if the application exits before the draft write succeeds.
 
 The planner derives previews from session configuration and the effective bibliographic record, checks vault destinations and collisions through a coordinator-injected read-only PlanningEnvironmentProvider, and stays independent of file writes. Applying a reviewed set freezes that invocation's scope so new asynchronous results do not join it silently. If a relevant plan changes after preview, it must be shown again rather than applied under an obsolete preview.
 
 ### One consequential mutation boundary
 
-**ApplyChangesService** is the domain boundary for all final PDF path/binary and optional artifact writes. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. Slice 1 extracted the rename-only service; Slice 3 activates it for the frozen Ready subset. The old `processEntry()` and ItemView-owned batch orchestration have been removed.
+**ApplyChangesService** is the current file-mutation boundary. UI, cards, inspectors and setup components may request Apply but must not call `Vault.rename()`, binary writes or companion/cover writes directly. It accepts a frozen rename-only invocation for the Ready subset. The old `processEntry()` and ItemView-owned batch orchestration have been removed.
 
 Mutable session state feeds pure planning, which produces the reviewed **frozen Apply invocation plan** consumed by the service. That snapshot explicitly lists every operation's source, reviewed destination and relevant observed source/configuration context. It contains detached values rather than live session-entry/settings references; host `TFile` bindings are kept separate and must not be frozen. The service receives this explicit scope and returns per-PDF outcomes for the coordinator to record. It never discovers additional session entries, replans against live session configuration or repeatedly reads mutable UI/session scope during execution.
 
@@ -340,11 +342,11 @@ One effective bibliographic record feeds filename, embedded-PDF metadata and any
 
 ### Session-draft recovery is a separate concern
 
-A small, versioned **SessionDraftStore** preserves unfinished work: manifest, source observations, identification evidence, repairs, session values and previews. It can use plugin-local persistence without becoming a library/history database. It is separate from durable defaults even if both share Obsidian's plugin-data storage; neither save path may clobber the other.
+A small, independently versioned session draft preserves unfinished work: manifest, source observations, bounded identification evidence, repairs, session values and useful Apply summaries. It uses plugin-local persistence without becoming a library/history database. It is separate from durable defaults even though both share Obsidian's plugin-data storage; neither save path may clobber the other.
 
-Restoring a draft restores the session's own configuration and revalidates source references and proposed transformations against the active vault before they can become Ready. Persisted previews are recoverable context, never permission to replay mutation. Interrupted identification becomes resumable read-only work; an interrupted Apply cannot be inferred successful or safe to retry from a draft alone. Missing/changed files, corrupt/unsupported draft data and unavailable destinations produce truthful recovery feedback.
+Explicit Resume restores the saved configuration and membership order and recomputes planning. It rebinds an item only when the exact saved vault-relative path resolves to a PDF with finite mtime/size values that exactly match the saved observation. This path + PDF + matching mtime/size rule is a trust boundary, not byte-level identity: a replacement preserving all three values cannot be detected. Missing, changed, folder, and non-PDF sources remain inspectable historical items without planning or Apply authority. Persisted previews are never restored as authority. Interrupted identification returns to safe unattempted work; completed failure/ambiguity is not retried automatically. An interrupted Apply is never inferred successful or replayed from a draft.
 
-Draft recovery may ship by Slice 4, well before file-operation recovery. It does not repair a partially written PDF, prove a multi-file Apply committed, or resolve syncing versions. File-operation recovery belongs inside the mutation boundary and requires verified platform findings and a separate approved design before binary writeback can ship.
+Draft recovery preserves unfinished-session work. It does not repair a partially written PDF, prove a multi-file Apply committed, roll back or replay an operation, or resolve syncing versions. File-operation recovery belongs inside the mutation boundary and requires verified platform findings and a separate approved design before binary writeback can ship.
 
 ## Safety boundary
 
@@ -516,10 +518,22 @@ Why: early unfinished-work preservation must not imply that a PDF write complete
 
 Decision: malformed legacy destinations fall back to the safe current-folder default, while valid legacy filename/destination preferences migrate where unambiguous. Apply consumes a detached frozen invocation plan; mutable session state is not execution scope. Metadata configuration intent may precede writer capability without claiming writes.
 
-Why: these human corrections approve the overall redesign while removing obsolete malformed-state authority and establishing the exact mutation seam. The detailed Slice 1 plan resolves persistence/data ownership without implementing recovery or binary writing.
+Why: these decisions remove obsolete malformed-state authority and establish the exact mutation seam. The implementation keeps persistence ownership in one plugin-data store without introducing file-operation recovery or binary writing.
 
 ### 2026-10-07 — Separate canonical authorship from output formatting
 
 Decision: preserve complete ordered provider authorship and available person/literal/institution structure independently of derived filename/metadata representations. The factory uses first family name + conditional et al., parenthesized year and title; valid legacy user templates remain exact preferences.
 
 Why: raw first-full/all-full fields are inadequate as a domain and cannot justify surname guessing, internal truncation or treating current lossy provider results as complete. Slice 1 establishes types/formatter boundaries; lossless provider ingestion is required before Slice 3 identification.
+
+### 2026-10-11 — Keep user repair authority separate from machine evidence
+
+Decision: retain whole provider candidates and accepted automatic evidence separately from an explicit user-selected candidate or user-edited record. Planning uses the user record when present, otherwise the accepted automatic record. Repair activity does not erase effective authority.
+
+Why: a reviewed user decision must not rewrite machine confidence or create field-by-field provenance. Later accepted edits invalidate current planning and are reevaluated against the current source and configuration.
+
+### 2026-10-11 — Recover unfinished sessions without recovering file operations
+
+Decision: after first PDF admission, persist a bounded versioned session draft and require an explicit Resume or confirmed discard decision after reload. Resume rebinds only exact-path PDFs whose finite mtime and size match the saved observation; it always creates fresh runtime authority and recomputes planning.
+
+Why: path and stat checks support useful recovery while remaining honest about their limit. They do not prove byte identity or permit inferring, replaying or rolling back an Apply operation.
